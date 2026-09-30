@@ -17,6 +17,9 @@ for line in _ENV_LOGS:
     print("[env]", line)
 
 from agent import OmniAgent
+from memory_patch import apply_memory
+
+OmniAgent = apply_memory(OmniAgent)
 
 app = FastAPI(title="GitHub Omni Agent")
 
@@ -43,10 +46,6 @@ def get_agent() -> OmniAgent:
             missing.append("GEMINI_API_KEY")
         if not st["has_github"]:
             missing.append("GITHUB_TOKEN")
-        paths = "\n".join(f"  - {p}" for p in [
-            "کنار web_app.py",
-            "پوشه‌ای که از آن python را اجرا می‌کنی",
-        ])
         msg = (
             "کلیدهای زیر پیدا نشد: " + ", ".join(missing) + "\n\n"
             + f"مسیر .env لودشده: {_ENV_PATH or 'هیچ'}\n"
@@ -261,7 +260,8 @@ PAGE = r'''<!DOCTYPE html>
       <div class="avatar">AI</div>
       <div class="bubble">سلام 👋 من GitHub Omni Agent هستم.
 
-دستورات را فارسی یا انگلیسی بنویس.</div>
+دستورات را فارسی یا انگلیسی بنویس.
+حافظه مکالمه فعال است — اگر خواستی پاک شود بنویس: پاک کردن حافظه</div>
     </div>
   </div>
   <div id="confirm">
