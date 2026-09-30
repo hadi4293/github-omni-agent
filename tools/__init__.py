@@ -1,1 +1,1 @@
-# GitHub Omni Agent tools package
+# GitHub Omni Agent tools
