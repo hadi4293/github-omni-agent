@@ -17,9 +17,8 @@ load_dotenv()
 
 app = FastAPI(title="GitHub Omni Agent", version="1.0")
 
-# یک نمونه ایجنت برای هر session ساده (در production بهتره per-user باشه)
 _agent: Optional[OmniAgent] = None
-_pending_confirm: Optional[dict] = None  # برای تأیید عملیات خطرناک
+_pending_confirm: Optional[dict] = None
 
 
 def get_agent() -> OmniAgent:
@@ -31,8 +30,6 @@ def get_agent() -> OmniAgent:
             raise RuntimeError("GEMINI_API_KEY یا GITHUB_TOKEN تنظیم نشده")
 
         def web_confirm(description: str) -> bool:
-            # در وب، تأیید را از طریق API جداگانه می‌گیریم
-            # اینجا False برمی‌گردونیم تا ایجنت پیام «نیاز به تأیید» بده
             global _pending_confirm
             _pending_confirm = {"description": description, "approved": False}
             return False
@@ -66,41 +63,33 @@ async def chat(req: ChatRequest):
         _pending_confirm = None
         reply = agent.run(req.message.strip())
 
-        # اگر عملیات خطرناک درخواست شده بود
         if _pending_confirm and not _pending_confirm.get("approved"):
             return JSONResponse({
-                "reply": reply,
+                "reply": reply or "",
                 "needs_confirm": True,
                 "confirm_description": _pending_confirm["description"],
             })
 
-        return JSONResponse({"reply": reply, "needs_confirm": False})
+        return JSONResponse({"reply": reply or "", "needs_confirm": False})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/confirm")
 async def confirm(req: ConfirmRequest):
-    global _pending_confirm, _agent
+    global _pending_confirm
     if not _pending_confirm:
         return JSONResponse({"reply": "هیچ عملیات معلقی وجود ندارد.", "needs_confirm": False})
 
     if req.approved:
-        # کاربر تأیید کرد → دوباره پیام قبلی را با تأیید بفرست
-        # برای سادگی، به کاربر می‌گیم که دوباره دستور را بزند یا مستقیم اجرا کنیم
-        # اینجا یک راه ساده: تأیید را ذخیره می‌کنیم و از کاربر می‌خواهیم دوباره بگوید
-        _pending_confirm["approved"] = True
-        # چون callback قبلاً False برگردونده، ساده‌ترین راه این است که
-        # یک پیام سیستمی بفرستیم
         try:
             agent = get_agent()
-            # override موقت
             original_cb = agent.confirm_callback
             agent.confirm_callback = lambda d: True
             reply = agent.run("بله، تأیید می‌کنم. عملیات را انجام بده.")
             agent.confirm_callback = original_cb
             _pending_confirm = None
-            return JSONResponse({"reply": reply, "needs_confirm": False})
+            return JSONResponse({"reply": reply or "", "needs_confirm": False})
         except Exception as e:
             return JSONResponse({"reply": f"خطا: {e}", "needs_confirm": False})
     else:
@@ -114,65 +103,244 @@ async def health():
     return {"status": "ok" if ok else "missing_env", "model": "gemini-3.5-flash-lite"}
 
 
-HTML_PAGE = """<!DOCTYPE html>
+HTML_PAGE = r"""<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GitHub Omni Agent</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            brand: { 50:'#f0f9ff',100:'#e0f2fe',200:'#bae6fd',300:'#7dd3fc',400:'#38bdf8',500:'#0ea5e9',600:'#0284c7',700:'#0369a1',800:'#075985',900:'#0c4a6e' },
-            dark: { 800:'#1e1e2e',900:'#11111b',950:'#0a0a0f' }
-          },
-          fontFamily: { sans: ['Vazirmatn','Inter','system-ui','sans-serif'] }
-        }
-      }
-    }
-  </script>
   <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    body { font-family: 'Vazirmatn', system-ui, sans-serif; }
-    .msg-user { background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%); }
-    .msg-bot  { background: #1e1e2e; border: 1px solid #2a2a3c; }
-    .scrollbar::-webkit-scrollbar { width: 6px; }
-    .scrollbar::-webkit-scrollbar-track { background: transparent; }
-    .scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-    #chat-box { scroll-behavior: smooth; }
-    .typing span { animation: blink 1.4s infinite both; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Vazirmatn', system-ui, sans-serif;
+      background: #0a0a0f;
+      color: #e5e7eb;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Header */
+    header {
+      border-bottom: 1px solid #1f2937;
+      background: rgba(17, 17, 27, 0.9);
+      backdrop-filter: blur(12px);
+      flex-shrink: 0;
+      z-index: 20;
+    }
+    .header-inner {
+      max-width: 48rem;
+      margin: 0 auto;
+      padding: 0.75rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      width: 2.25rem; height: 2.25rem;
+      border-radius: 0.75rem;
+      background: linear-gradient(135deg, #38bdf8, #0284c7);
+      display: flex; align-items: center; justify-content: center;
+      color: white; font-weight: 700; font-size: 1.1rem;
+      box-shadow: 0 4px 14px rgba(14, 165, 233, 0.25);
+    }
+    .status {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: 9999px;
+      background: rgba(34, 197, 94, 0.1);
+      color: #4ade80;
+      border: 1px solid rgba(34, 197, 94, 0.2);
+    }
+    .status.busy {
+      background: rgba(14, 165, 233, 0.1);
+      color: #7dd3fc;
+      border-color: rgba(14, 165, 233, 0.2);
+    }
+    .status.err {
+      background: rgba(239, 68, 68, 0.1);
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.2);
+    }
+
+    /* Main chat */
+    main {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      max-width: 48rem;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    #chat-box {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 1.5rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+    #chat-box::-webkit-scrollbar { width: 5px; }
+    #chat-box::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+    .msg {
+      max-width: 85%;
+      padding: 0.75rem 1rem;
+      border-radius: 1rem;
+      font-size: 0.9rem;
+      line-height: 1.65;
+      word-wrap: break-word;
+      animation: fadeIn 0.25s ease;
+    }
+    .msg-user {
+      align-self: flex-start;
+      background: linear-gradient(135deg, #0ea5e9, #0284c7);
+      color: #fff;
+      border-bottom-right-radius: 0.25rem;
+    }
+    .msg-bot {
+      align-self: flex-end;
+      background: #1e1e2e;
+      border: 1px solid #2a2a3c;
+      color: #e5e7eb;
+      border-bottom-left-radius: 0.25rem;
+    }
+    .msg-bot code {
+      background: rgba(0,0,0,0.35);
+      padding: 0.1rem 0.35rem;
+      border-radius: 0.25rem;
+      color: #7dd3fc;
+      font-size: 0.85em;
+    }
+    .msg-bot strong { color: #fff; }
+
+    .typing {
+      align-self: flex-end;
+      background: #1e1e2e;
+      border: 1px solid #2a2a3c;
+      padding: 0.75rem 1.2rem;
+      border-radius: 1rem;
+      width: fit-content;
+    }
+    .typing span {
+      display: inline-block;
+      width: 6px; height: 6px;
+      margin: 0 2px;
+      background: #7dd3fc;
+      border-radius: 50%;
+      animation: blink 1.4s infinite both;
+    }
     .typing span:nth-child(2) { animation-delay: 0.2s; }
     .typing span:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes blink { 0%,80%,100%{opacity:0} 40%{opacity:1} }
-    .fade-in { animation: fadeIn 0.3s ease; }
-    @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+
+    @keyframes blink {
+      0%, 80%, 100% { opacity: 0.2; }
+      40% { opacity: 1; }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    /* Confirm */
+    #confirm-banner {
+      display: none;
+      margin: 0 1rem 0.5rem;
+      padding: 0.75rem 1rem;
+      border-radius: 0.75rem;
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      font-size: 0.875rem;
+    }
+    #confirm-banner.show { display: block; }
+    #confirm-text { color: #fcd34d; margin-bottom: 0.5rem; }
+    .btn-confirm {
+      padding: 0.35rem 1rem;
+      border-radius: 0.5rem;
+      font-size: 0.8rem;
+      font-weight: 500;
+      border: none;
+      cursor: pointer;
+      margin-left: 0.4rem;
+    }
+    .btn-yes { background: #f59e0b; color: #000; }
+    .btn-yes:hover { background: #fbbf24; }
+    .btn-no { background: #374151; color: #e5e7eb; }
+    .btn-no:hover { background: #4b5563; }
+
+    /* Input */
+    .input-area {
+      flex-shrink: 0;
+      border-top: 1px solid #1f2937;
+      background: rgba(17, 17, 27, 0.7);
+      backdrop-filter: blur(12px);
+      padding: 1rem;
+    }
+    .input-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: flex-end;
+    }
+    #user-input {
+      flex: 1;
+      resize: none;
+      background: #1e1e2e;
+      border: 1px solid #374151;
+      border-radius: 1rem;
+      padding: 0.75rem 1rem;
+      color: #e5e7eb;
+      font-family: inherit;
+      font-size: 0.9rem;
+      max-height: 8rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    #user-input:focus {
+      border-color: #0ea5e9;
+      box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.2);
+    }
+    #user-input::placeholder { color: #6b7280; }
+    #send-btn {
+      width: 2.75rem; height: 2.75rem;
+      border-radius: 0.75rem;
+      background: #0ea5e9;
+      border: none;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 4px 14px rgba(14, 165, 233, 0.3);
+      transition: background 0.15s, transform 0.1s;
+      flex-shrink: 0;
+    }
+    #send-btn:hover { background: #38bdf8; }
+    #send-btn:active { transform: scale(0.95); }
+    #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #send-btn svg { width: 1.25rem; height: 1.25rem; fill: white; }
   </style>
 </head>
-<body class="bg-dark-950 text-gray-100 min-h-screen flex flex-col">
+<body>
 
-  <!-- Header -->
-  <header class="border-b border-gray-800 bg-dark-900/80 backdrop-blur sticky top-0 z-20">
-    <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-brand-500/20">G</div>
+  <header>
+    <div class="header-inner">
+      <div style="display:flex;align-items:center;gap:0.75rem">
+        <div class="logo">G</div>
         <div>
-          <h1 class="font-semibold text-base leading-tight">GitHub Omni Agent</h1>
-          <p class="text-xs text-gray-400">gemini-3.5-flash-lite · رایگان</p>
+          <div style="font-weight:600;font-size:0.95rem">GitHub Omni Agent</div>
+          <div style="font-size:0.7rem;color:#9ca3af">gemini-3.5-flash-lite · رایگان</div>
         </div>
       </div>
-      <div id="status" class="text-xs px-2.5 py-1 rounded-full bg-green-500/10 text-green-400 border border-green-500/20">آماده</div>
+      <div id="status" class="status">آماده</div>
     </div>
   </header>
 
-  <!-- Chat Area -->
-  <main class="flex-1 overflow-hidden flex flex-col max-w-3xl w-full mx-auto">
-    <div id="chat-box" class="flex-1 overflow-y-auto scrollbar px-4 py-6 space-y-4">
-      <!-- Welcome -->
-      <div class="fade-in msg-bot rounded-2xl rounded-tr-sm px-4 py-3 max-w-[85%] text-sm leading-relaxed">
-        سلام 👋 من <strong>GitHub Omni Agent</strong> هستم.<br>
+  <main>
+    <div id="chat-box">
+      <div class="msg msg-bot">
+        سلام 👋 من <strong>GitHub Omni Agent</strong> هستم.<br><br>
         می‌تونی فارسی یا انگلیسی ازم بخوای کارهای گیت‌هاب رو انجام بدم.<br><br>
         مثلاً:<br>
         • لیست ریپوهای من رو نشون بده<br>
@@ -181,144 +349,174 @@ HTML_PAGE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Confirm Banner -->
-    <div id="confirm-banner" class="hidden mx-4 mb-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-sm">
-      <p id="confirm-text" class="text-amber-200 mb-2"></p>
-      <div class="flex gap-2">
-        <button onclick="sendConfirm(true)" class="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-medium text-sm transition">تأیید و اجرا</button>
-        <button onclick="sendConfirm(false)" class="px-4 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-sm transition">لغو</button>
-      </div>
+    <div id="confirm-banner">
+      <p id="confirm-text"></p>
+      <button class="btn-confirm btn-yes" onclick="sendConfirm(true)">تأیید و اجرا</button>
+      <button class="btn-confirm btn-no" onclick="sendConfirm(false)">لغو</button>
     </div>
 
-    <!-- Input -->
-    <div class="border-t border-gray-800 bg-dark-900/60 backdrop-blur p-4">
-      <form id="chat-form" class="flex gap-2 items-end">
-        <textarea id="user-input" rows="1" placeholder="پیامت را بنویس..." 
-          class="flex-1 resize-none bg-dark-800 border border-gray-700 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/50 transition max-h-32"
-          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();submitChat()}"></textarea>
-        <button type="submit" id="send-btn"
-          class="w-11 h-11 rounded-xl bg-brand-500 hover:bg-brand-400 active:scale-95 transition flex items-center justify-center shadow-lg shadow-brand-500/25 disabled:opacity-50">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+    <div class="input-area">
+      <form id="chat-form" class="input-row" onsubmit="return false;">
+        <textarea id="user-input" rows="1" placeholder="پیامت را بنویس..."></textarea>
+        <button type="button" id="send-btn" onclick="submitChat()">
+          <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
         </button>
       </form>
     </div>
   </main>
 
 <script>
-const chatBox = document.getElementById('chat-box');
-const form = document.getElementById('chat-form');
-const input = document.getElementById('user-input');
-const sendBtn = document.getElementById('send-btn');
-const statusEl = document.getElementById('status');
-const confirmBanner = document.getElementById('confirm-banner');
-const confirmText = document.getElementById('confirm-text');
+(function () {
+  const chatBox = document.getElementById('chat-box');
+  const input = document.getElementById('user-input');
+  const sendBtn = document.getElementById('send-btn');
+  const statusEl = document.getElementById('status');
+  const confirmBanner = document.getElementById('confirm-banner');
+  const confirmText = document.getElementById('confirm-text');
 
-function addMsg(text, isUser) {
-  const div = document.createElement('div');
-  div.className = `fade-in ${isUser ? 'msg-user text-white ml-auto' : 'msg-bot'} rounded-2xl ${isUser ? 'rounded-tl-sm' : 'rounded-tr-sm'} px-4 py-3 max-w-[85%] text-sm leading-relaxed whitespace-pre-wrap`;
-  div.innerHTML = formatMarkdown(text);
-  chatBox.appendChild(div);
-  chatBox.scrollTop = chatBox.scrollHeight;
-}
+  function escapeHtml(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+  }
 
-function formatMarkdown(t) {
-  return t
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code class="bg-black/30 px-1 rounded text-brand-300">$1</code>')
-    .replace(/\n/g, '<br>');
-}
+  function formatText(t) {
+    if (!t) return '';
+    let s = escapeHtml(String(t));
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    s = s.replace(/\n/g, '<br>');
+    return s;
+  }
 
-function showTyping() {
-  const div = document.createElement('div');
-  div.id = 'typing';
-  div.className = 'msg-bot rounded-2xl rounded-tr-sm px-4 py-3 w-fit typing';
-  div.innerHTML = '<span>•</span><span>•</span><span>•</span>';
-  chatBox.appendChild(div);
-  chatBox.scrollTop = chatBox.scrollHeight;
-}
+  function addMsg(text, isUser) {
+    const div = document.createElement('div');
+    div.className = 'msg ' + (isUser ? 'msg-user' : 'msg-bot');
+    div.innerHTML = formatText(text);
+    chatBox.appendChild(div);
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
 
-function hideTyping() {
-  const t = document.getElementById('typing');
-  if (t) t.remove();
-}
+  function showTyping() {
+    const div = document.createElement('div');
+    div.id = 'typing';
+    div.className = 'typing';
+    div.innerHTML = '<span></span><span></span><span></span>';
+    chatBox.appendChild(div);
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
 
-form.addEventListener('submit', e => { e.preventDefault(); submitChat(); });
+  function hideTyping() {
+    const t = document.getElementById('typing');
+    if (t) t.remove();
+  }
 
-async function submitChat() {
-  const msg = input.value.trim();
-  if (!msg) return;
-  input.value = '';
-  input.style.height = 'auto';
-  addMsg(msg, true);
-  sendBtn.disabled = true;
-  statusEl.textContent = 'در حال فکر...';
-  statusEl.className = 'text-xs px-2.5 py-1 rounded-full bg-brand-500/10 text-brand-300 border border-brand-500/20';
-  showTyping();
+  function setStatus(text, type) {
+    statusEl.textContent = text;
+    statusEl.className = 'status' + (type === 'busy' ? ' busy' : type === 'err' ? ' err' : '');
+  }
 
-  try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: msg})
-    });
-    const data = await res.json();
-    hideTyping();
-    if (!res.ok) throw new Error(data.detail || 'خطا');
-    addMsg(data.reply, false);
-    if (data.needs_confirm) {
-      confirmText.textContent = '⚠ ' + data.confirm_description;
-      confirmBanner.classList.remove('hidden');
-    } else {
-      confirmBanner.classList.add('hidden');
+  window.submitChat = async function () {
+    const msg = input.value.trim();
+    if (!msg) return;
+
+    input.value = '';
+    input.style.height = 'auto';
+    addMsg(msg, true);
+
+    sendBtn.disabled = true;
+    setStatus('در حال فکر...', 'busy');
+    showTyping();
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg })
+      });
+
+      const data = await res.json();
+      hideTyping();
+
+      if (!res.ok) {
+        addMsg('خطا: ' + (data.detail || res.statusText || 'نامشخص'), false);
+        setStatus('خطا', 'err');
+        return;
+      }
+
+      addMsg(data.reply || '(پاسخ خالی)', false);
+
+      if (data.needs_confirm) {
+        confirmText.textContent = '⚠ ' + (data.confirm_description || 'عملیات خطرناک');
+        confirmBanner.classList.add('show');
+      } else {
+        confirmBanner.classList.remove('show');
+      }
+
+      setStatus('آماده');
+    } catch (err) {
+      hideTyping();
+      addMsg('خطا در ارتباط: ' + err.message, false);
+      setStatus('خطا', 'err');
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
     }
-  } catch (err) {
-    hideTyping();
-    addMsg('خطا: ' + err.message, false);
-  } finally {
-    sendBtn.disabled = false;
-    statusEl.textContent = 'آماده';
-    statusEl.className = 'text-xs px-2.5 py-1 rounded-full bg-green-500/10 text-green-400 border border-green-500/20';
-    input.focus();
-  }
-}
+  };
 
-async function sendConfirm(approved) {
-  confirmBanner.classList.add('hidden');
-  showTyping();
-  statusEl.textContent = 'در حال اجرا...';
-  try {
-    const res = await fetch('/api/confirm', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({approved})
-    });
-    const data = await res.json();
-    hideTyping();
-    addMsg(data.reply, false);
-  } catch (err) {
-    hideTyping();
-    addMsg('خطا: ' + err.message, false);
-  }
-  statusEl.textContent = 'آماده';
-}
+  window.sendConfirm = async function (approved) {
+    confirmBanner.classList.remove('show');
+    showTyping();
+    setStatus('در حال اجرا...', 'busy');
 
-// auto-resize textarea
-input.addEventListener('input', () => {
-  input.style.height = 'auto';
-  input.style.height = Math.min(input.scrollHeight, 128) + 'px';
-});
+    try {
+      const res = await fetch('/api/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved: approved })
+      });
+      const data = await res.json();
+      hideTyping();
+      addMsg(data.reply || '', false);
+      setStatus('آماده');
+    } catch (err) {
+      hideTyping();
+      addMsg('خطا: ' + err.message, false);
+      setStatus('خطا', 'err');
+    }
+  };
 
-// health check
-fetch('/api/health').then(r => r.json()).then(d => {
-  if (d.status !== 'ok') {
-    statusEl.textContent = 'کلیدها تنظیم نشده';
-    statusEl.className = 'text-xs px-2.5 py-1 rounded-full bg-red-500/10 text-red-400 border border-red-500/20';
-  }
-});
+  // Enter to send
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submitChat();
+    }
+  });
+
+  // Auto-resize
+  input.addEventListener('input', function () {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 128) + 'px';
+  });
+
+  // Health check
+  fetch('/api/health')
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.status !== 'ok') {
+        setStatus('کلیدها تنظیم نشده', 'err');
+      }
+    })
+    .catch(function () {});
+
+  input.focus();
+})();
 </script>
 </body>
 </html>
 """
+
 
 if __name__ == "__main__":
     import uvicorn
