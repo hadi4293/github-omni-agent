@@ -1,18 +1,15 @@
 """
 هسته ایجنت - Gemini Function Calling + تمام ابزارهای گیت‌هاب
-نسخه نهایی و کامل
+مدل: gemini-3.5-flash-lite
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional, Callable
 
 import google.generativeai as genai
-from rich.console import Console
 
 from tools.github_tools import GitHubTools
-
-console = Console()
 
 SYSTEM_PROMPT = """تو یک ایجنت هوشمند و همه‌کاره برای گیت‌هاب هستی.
 نام تو: GitHub Omni Agent
@@ -32,14 +29,20 @@ SYSTEM_PROMPT = """تو یک ایجنت هوشمند و همه‌کاره برا
 
 
 class OmniAgent:
-    def __init__(self, gemini_api_key: str, github_token: str):
+    def __init__(
+        self,
+        gemini_api_key: str,
+        github_token: str,
+        confirm_callback: Optional[Callable[[str], bool]] = None,
+    ):
         genai.configure(api_key=gemini_api_key)
         self.gh = GitHubTools(github_token)
+        self.confirm_callback = confirm_callback  # برای وب/CLI
 
         self.tools = self._build_tools()
 
         self.model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash",
+            model_name="gemini-3.5-flash-lite",
             system_instruction=SYSTEM_PROMPT,
             tools=self.tools,
         )
@@ -50,7 +53,6 @@ class OmniAgent:
         return [
             genai.protos.Tool(
                 function_declarations=[
-                    # ── Repo ──
                     genai.protos.FunctionDeclaration(
                         name="list_my_repos",
                         description="لیست ریپوهای کاربر لاگین‌شده",
@@ -72,14 +74,8 @@ class OmniAgent:
                             properties={
                                 "name": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "description": genai.protos.Schema(type=genai.protos.Type.STRING),
-                                "private": genai.protos.Schema(
-                                    type=genai.protos.Type.BOOLEAN,
-                                    description="خصوصی باشد؟ پیش‌فرض true",
-                                ),
-                                "auto_init": genai.protos.Schema(
-                                    type=genai.protos.Type.BOOLEAN,
-                                    description="با README ساخته شود؟ پیش‌فرض true",
-                                ),
+                                "private": genai.protos.Schema(type=genai.protos.Type.BOOLEAN),
+                                "auto_init": genai.protos.Schema(type=genai.protos.Type.BOOLEAN),
                             },
                             required=["name"],
                         ),
@@ -104,10 +100,7 @@ class OmniAgent:
                             properties={
                                 "owner": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "repo": genai.protos.Schema(type=genai.protos.Type.STRING),
-                                "path": genai.protos.Schema(
-                                    type=genai.protos.Type.STRING,
-                                    description="مسیر پوشه (اختیاری)",
-                                ),
+                                "path": genai.protos.Schema(type=genai.protos.Type.STRING),
                             },
                             required=["owner", "repo"],
                         ),
@@ -136,7 +129,6 @@ class OmniAgent:
                             required=["owner", "repo"],
                         ),
                     ),
-                    # ── File ──
                     genai.protos.FunctionDeclaration(
                         name="get_file_content",
                         description="خواندن محتوای یک فایل",
@@ -146,10 +138,7 @@ class OmniAgent:
                                 "owner": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "repo": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "path": genai.protos.Schema(type=genai.protos.Type.STRING),
-                                "ref": genai.protos.Schema(
-                                    type=genai.protos.Type.STRING,
-                                    description="برنچ یا تگ (اختیاری)",
-                                ),
+                                "ref": genai.protos.Schema(type=genai.protos.Type.STRING),
                             },
                             required=["owner", "repo", "path"],
                         ),
@@ -164,14 +153,8 @@ class OmniAgent:
                                 "repo": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "path": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "content": genai.protos.Schema(type=genai.protos.Type.STRING),
-                                "message": genai.protos.Schema(
-                                    type=genai.protos.Type.STRING,
-                                    description="پیام کامیت",
-                                ),
-                                "branch": genai.protos.Schema(
-                                    type=genai.protos.Type.STRING,
-                                    description="برنچ (پیش‌فرض main)",
-                                ),
+                                "message": genai.protos.Schema(type=genai.protos.Type.STRING),
+                                "branch": genai.protos.Schema(type=genai.protos.Type.STRING),
                             },
                             required=["owner", "repo", "path", "content", "message"],
                         ),
@@ -191,7 +174,6 @@ class OmniAgent:
                             required=["owner", "repo", "path", "message"],
                         ),
                     ),
-                    # ── Issue ──
                     genai.protos.FunctionDeclaration(
                         name="list_issues",
                         description="لیست issueهای یک ریپو",
@@ -200,10 +182,7 @@ class OmniAgent:
                             properties={
                                 "owner": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "repo": genai.protos.Schema(type=genai.protos.Type.STRING),
-                                "state": genai.protos.Schema(
-                                    type=genai.protos.Type.STRING,
-                                    description="open | closed | all",
-                                ),
+                                "state": genai.protos.Schema(type=genai.protos.Type.STRING),
                             },
                             required=["owner", "repo"],
                         ),
@@ -281,7 +260,6 @@ class OmniAgent:
                             required=["owner", "repo", "issue_number"],
                         ),
                     ),
-                    # ── Pull Request ──
                     genai.protos.FunctionDeclaration(
                         name="list_pull_requests",
                         description="لیست Pull Requestهای یک ریپو",
@@ -290,10 +268,7 @@ class OmniAgent:
                             properties={
                                 "owner": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "repo": genai.protos.Schema(type=genai.protos.Type.STRING),
-                                "state": genai.protos.Schema(
-                                    type=genai.protos.Type.STRING,
-                                    description="open | closed | all",
-                                ),
+                                "state": genai.protos.Schema(type=genai.protos.Type.STRING),
                             },
                             required=["owner", "repo"],
                         ),
@@ -308,14 +283,8 @@ class OmniAgent:
                                 "repo": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "title": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "body": genai.protos.Schema(type=genai.protos.Type.STRING),
-                                "head": genai.protos.Schema(
-                                    type=genai.protos.Type.STRING,
-                                    description="برنچ مبدأ",
-                                ),
-                                "base": genai.protos.Schema(
-                                    type=genai.protos.Type.STRING,
-                                    description="برنچ مقصد (معمولاً main)",
-                                ),
+                                "head": genai.protos.Schema(type=genai.protos.Type.STRING),
+                                "base": genai.protos.Schema(type=genai.protos.Type.STRING),
                             },
                             required=["owner", "repo", "title", "head", "base"],
                         ),
@@ -347,7 +316,6 @@ class OmniAgent:
                             required=["owner", "repo", "pr_number"],
                         ),
                     ),
-                    # ── Branch & Commit ──
                     genai.protos.FunctionDeclaration(
                         name="list_branches",
                         description="لیست برنچ‌های یک ریپو",
@@ -369,10 +337,7 @@ class OmniAgent:
                                 "owner": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "repo": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "branch_name": genai.protos.Schema(type=genai.protos.Type.STRING),
-                                "from_branch": genai.protos.Schema(
-                                    type=genai.protos.Type.STRING,
-                                    description="برنچ مبدأ (پیش‌فرض main)",
-                                ),
+                                "from_branch": genai.protos.Schema(type=genai.protos.Type.STRING),
                             },
                             required=["owner", "repo", "branch_name"],
                         ),
@@ -385,25 +350,18 @@ class OmniAgent:
                             properties={
                                 "owner": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "repo": genai.protos.Schema(type=genai.protos.Type.STRING),
-                                "limit": genai.protos.Schema(
-                                    type=genai.protos.Type.INTEGER,
-                                    description="تعداد کامیت (پیش‌فرض ۱۰)",
-                                ),
+                                "limit": genai.protos.Schema(type=genai.protos.Type.INTEGER),
                             },
                             required=["owner", "repo"],
                         ),
                     ),
-                    # ── Search & User ──
                     genai.protos.FunctionDeclaration(
                         name="search_code",
                         description="جستجوی کد در گیت‌هاب",
                         parameters=genai.protos.Schema(
                             type=genai.protos.Type.OBJECT,
                             properties={
-                                "query": genai.protos.Schema(
-                                    type=genai.protos.Type.STRING,
-                                    description="کوئری جستجو (مثلاً repo:owner/repo language:python)",
-                                ),
+                                "query": genai.protos.Schema(type=genai.protos.Type.STRING),
                             },
                             required=["query"],
                         ),
@@ -425,10 +383,7 @@ class OmniAgent:
                                 "filename": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "content": genai.protos.Schema(type=genai.protos.Type.STRING),
                                 "description": genai.protos.Schema(type=genai.protos.Type.STRING),
-                                "public": genai.protos.Schema(
-                                    type=genai.protos.Type.BOOLEAN,
-                                    description="عمومی باشد؟ پیش‌فرض false",
-                                ),
+                                "public": genai.protos.Schema(type=genai.protos.Type.BOOLEAN),
                             },
                             required=["filename", "content"],
                         ),
@@ -437,34 +392,34 @@ class OmniAgent:
             )
         ]
 
-    def _ask_user_confirmation(self, description: str) -> bool:
-        console.print(f"\n[bold yellow]⚠ عملیات خطرناک:[/bold yellow] {description}")
-        answer = (
-            console.input("[bold]آیا مطمئنی؟ (yes / y / بله) یا (no / n / خیر) › [/bold]")
-            .strip()
-            .lower()
-        )
-        return answer in ("yes", "y", "بله", "آره", "باشه")
+    def _ask_confirmation(self, description: str) -> bool:
+        if self.confirm_callback:
+            return self.confirm_callback(description)
+        # حالت CLI
+        try:
+            from rich.console import Console
+            c = Console()
+            c.print(f"\n[bold yellow]⚠ عملیات خطرناک:[/bold yellow] {description}")
+            answer = c.input("[bold]آیا مطمئنی؟ (yes/y/بله) › [/bold]").strip().lower()
+            return answer in ("yes", "y", "بله", "آره", "باشه")
+        except Exception:
+            return False
 
     def _execute_tool(self, name: str, args: dict[str, Any]) -> str:
         try:
-            # ── عملیات خطرناک که نیاز به تأیید دارند ──
             if name == "delete_file":
-                ok = self._ask_user_confirmation(
+                ok = self._ask_confirmation(
                     f"حذف فایل `{args['path']}` از `{args['owner']}/{args['repo']}`"
                 )
                 if not ok:
                     return "کاربر تأیید نکرد. عملیات لغو شد."
                 return self.gh.delete_file(
-                    args["owner"],
-                    args["repo"],
-                    args["path"],
-                    args["message"],
-                    args.get("branch", "main"),
+                    args["owner"], args["repo"], args["path"],
+                    args["message"], args.get("branch", "main"),
                 )
 
             if name == "delete_repo":
-                ok = self._ask_user_confirmation(
+                ok = self._ask_confirmation(
                     f"حذف کامل و دائمی ریپوی `{args['owner']}/{args['repo']}`"
                 )
                 if not ok:
@@ -472,26 +427,21 @@ class OmniAgent:
                 return self.gh.delete_repo(args["owner"], args["repo"])
 
             if name == "merge_pull_request":
-                ok = self._ask_user_confirmation(
+                ok = self._ask_confirmation(
                     f"Merge کردن PR #{args['pr_number']} در `{args['owner']}/{args['repo']}`"
                 )
                 if not ok:
                     return "کاربر تأیید نکرد. عملیات لغو شد."
                 return self.gh.merge_pull_request(
-                    args["owner"],
-                    args["repo"],
-                    args["pr_number"],
+                    args["owner"], args["repo"], args["pr_number"],
                     args.get("commit_message", ""),
                 )
 
-            # ── بقیه ابزارها ──
             mapping = {
                 "list_my_repos": lambda: self.gh.list_my_repos(args.get("limit", 30)),
                 "create_repo": lambda: self.gh.create_repo(
-                    args["name"],
-                    args.get("description", ""),
-                    args.get("private", True),
-                    args.get("auto_init", True),
+                    args["name"], args.get("description", ""),
+                    args.get("private", True), args.get("auto_init", True),
                 ),
                 "get_repo_tree": lambda: self.gh.get_repo_tree(
                     args["owner"], args["repo"], args.get("path", "")
@@ -502,22 +452,15 @@ class OmniAgent:
                     args["owner"], args["repo"], args["path"], args.get("ref")
                 ),
                 "create_or_update_file": lambda: self.gh.create_or_update_file(
-                    args["owner"],
-                    args["repo"],
-                    args["path"],
-                    args["content"],
-                    args["message"],
-                    args.get("branch", "main"),
+                    args["owner"], args["repo"], args["path"],
+                    args["content"], args["message"], args.get("branch", "main"),
                 ),
                 "list_issues": lambda: self.gh.list_issues(
                     args["owner"], args["repo"], args.get("state", "open")
                 ),
                 "create_issue": lambda: self.gh.create_issue(
-                    args["owner"],
-                    args["repo"],
-                    args["title"],
-                    args.get("body", ""),
-                    args.get("labels"),
+                    args["owner"], args["repo"], args["title"],
+                    args.get("body", ""), args.get("labels"),
                 ),
                 "add_issue_comment": lambda: self.gh.add_issue_comment(
                     args["owner"], args["repo"], args["issue_number"], args["body"]
@@ -529,31 +472,22 @@ class OmniAgent:
                     args["owner"], args["repo"], args["issue_number"]
                 ),
                 "update_issue": lambda: self.gh.update_issue(
-                    args["owner"],
-                    args["repo"],
-                    args["issue_number"],
-                    args.get("title"),
-                    args.get("body"),
+                    args["owner"], args["repo"], args["issue_number"],
+                    args.get("title"), args.get("body"),
                 ),
                 "list_pull_requests": lambda: self.gh.list_pull_requests(
                     args["owner"], args["repo"], args.get("state", "open")
                 ),
                 "create_pull_request": lambda: self.gh.create_pull_request(
-                    args["owner"],
-                    args["repo"],
-                    args["title"],
-                    args.get("body", ""),
-                    args["head"],
-                    args["base"],
+                    args["owner"], args["repo"], args["title"],
+                    args.get("body", ""), args["head"], args["base"],
                 ),
                 "close_pull_request": lambda: self.gh.close_pull_request(
                     args["owner"], args["repo"], args["pr_number"]
                 ),
                 "list_branches": lambda: self.gh.list_branches(args["owner"], args["repo"]),
                 "create_branch": lambda: self.gh.create_branch(
-                    args["owner"],
-                    args["repo"],
-                    args["branch_name"],
+                    args["owner"], args["repo"], args["branch_name"],
                     args.get("from_branch", "main"),
                 ),
                 "list_commits": lambda: self.gh.list_commits(
@@ -562,16 +496,13 @@ class OmniAgent:
                 "search_code": lambda: self.gh.search_code(args["query"]),
                 "get_me": lambda: self.gh.get_me(),
                 "create_gist": lambda: self.gh.create_gist(
-                    args["filename"],
-                    args["content"],
-                    args.get("description", ""),
-                    args.get("public", False),
+                    args["filename"], args["content"],
+                    args.get("description", ""), args.get("public", False),
                 ),
             }
 
             if name in mapping:
                 return mapping[name]()
-
             return f"ابزار ناشناخته: {name}"
 
         except Exception as e:
@@ -588,9 +519,7 @@ class OmniAgent:
 
             if not function_calls:
                 text_parts = [
-                    part.text
-                    for part in response.candidates[0].content.parts
-                    if part.text
+                    part.text for part in response.candidates[0].content.parts if part.text
                 ]
                 return "\n".join(text_parts) if text_parts else "پاسخی دریافت نشد."
 
@@ -598,9 +527,7 @@ class OmniAgent:
             for fc in function_calls:
                 name = fc.name
                 args = dict(fc.args) if fc.args else {}
-                console.print(f"[dim]→ اجرای ابزار: {name}[/dim]")
                 result = self._execute_tool(name, args)
-
                 function_responses.append(
                     genai.protos.Part(
                         function_response=genai.protos.FunctionResponse(
