@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-GitHub Omni Agent - CLI
-ایجنت همه‌کاره رایگان گیت‌هاب با Gemini
+GitHub Omni Agent - CLI Entry Point
+ایجنت همه‌کاره و رایگان گیت‌هاب با Gemini
 """
 
 import os
@@ -17,7 +17,7 @@ load_dotenv()
 console = Console()
 
 
-def check_env():
+def check_env() -> None:
     missing = []
     if not os.getenv("GEMINI_API_KEY"):
         missing.append("GEMINI_API_KEY")
@@ -27,25 +27,28 @@ def check_env():
     if missing:
         console.print(
             Panel(
-                f"[red]متغیرهای محیطی زیر تنظیم نشده‌اند:[/red]\n"
+                "[red]متغیرهای محیطی زیر تنظیم نشده‌اند:[/red]\n"
                 + "\n".join(f"  • {m}" for m in missing)
-                + "\n\nفایل [bold].env[/bold] را از روی [bold].env.example[/bold] بساز و پر کن.",
-                title="خطا",
+                + "\n\nفایل [bold].env[/bold] را از روی [bold].env.example[/bold] بساز و مقادیر را پر کن.\n"
+                "راهنما در README.md نوشته شده است.",
+                title="خطای پیکربندی",
                 border_style="red",
             )
         )
         sys.exit(1)
 
 
-def main():
+def main() -> None:
     check_env()
 
     console.print(
         Panel(
             "[bold cyan]GitHub Omni Agent[/bold cyan]\n"
-            "ایجنت همه‌کاره و رایگان گیت‌هاب\n"
-            "دستورات را به فارسی یا انگلیسی بنویس. برای خروج [bold]exit[/bold] یا [bold]خروج[/bold] بزن.",
+            "ایجنت همه‌کاره و کاملاً رایگان گیت‌هاب\n\n"
+            "دستورات را به [bold]فارسی[/bold] یا [bold]انگلیسی[/bold] بنویس.\n"
+            "برای خروج بنویس: [bold]exit[/bold] یا [bold]خروج[/bold]",
             border_style="cyan",
+            title="خوش آمدید",
         )
     )
 
@@ -64,18 +67,18 @@ def main():
         if not user_input:
             continue
 
-        if user_input.lower() in ("exit", "quit", "خروج", "q"):
-            console.print("[yellow]خداحافظ![/yellow]")
+        if user_input.lower() in ("exit", "quit", "خروج", "q", "bye"):
+            console.print("[yellow]خداحافظ! موفق باشی.[/yellow]")
             break
 
-        with console.status("[bold cyan]در حال فکر کردن...[/bold cyan]"):
+        with console.status("[bold cyan]در حال فکر کردن و اجرا...[/bold cyan]", spinner="dots"):
             try:
                 response = agent.run(user_input)
             except Exception as e:
-                console.print(f"[red]خطا:[/red] {e}")
+                console.print(f"[red]خطای غیرمنتظره:[/red] {e}")
                 continue
 
-        console.print(Panel(Markdown(response), title="ایجنت", border_style="blue"))
+        console.print(Panel(Markdown(str(response)), title="ایجنت", border_style="blue"))
 
 
 if __name__ == "__main__":

@@ -1,68 +1,143 @@
 # GitHub Omni Agent
 
-**ایجنت همه‌کاره و رایگان گیت‌هاب** با قدرت Gemini (Google AI Studio)
+**ایجنت همه‌کاره و کاملاً رایگان گیت‌هاب** با قدرت Gemini (Google AI Studio)
 
-## ویژگی‌ها
-- دسترسی کامل به گیت‌هاب (خوندن، نوشتن، issue، PR، کامیت، جستجو و ...)
-- فقط برای عملیات خطرناک (حذف فایل، حذف ریپو، force push و ...) ازت اجازه می‌گیره
-- کاملاً رایگان (Gemini Free Tier + GitHub Token خودت)
-- رابط خط فرمان ساده و فارسی/انگلیسی
+یک دستیار هوشمند که تقریباً همه کارهای گیت‌هاب را برای شما انجام می‌دهد و فقط برای عملیات خطرناک (حذف فایل، حذف ریپو، merge و ...) از شما اجازه می‌گیرد.
 
-## نصب سریع
+---
 
+## ویژگی‌های کامل
+
+### ریپوزیتوری
+- لیست تمام ریپوهای شما
+- ساخت ریپوی جدید
+- حذف ریپو (با تأیید)
+- دیدن ساختار فایل‌ها و پوشه‌ها
+- جستجوی کد در گیت‌هاب
+
+### فایل‌ها
+- خواندن محتوای فایل
+- ساخت و ویرایش فایل + کامیت خودکار
+- حذف فایل (با تأیید)
+
+### Issue
+- لیست issueها (open / closed / all)
+- ساخت issue جدید
+- کامنت گذاشتن روی issue
+- بستن و باز کردن issue
+- ویرایش عنوان و بدنه issue
+
+### Pull Request
+- لیست PRها
+- ساخت Pull Request
+- کامنت روی PR
+- Merge کردن PR (با تأیید)
+- بستن PR
+
+### برنچ و کامیت
+- لیست برنچ‌ها
+- ساخت برنچ جدید
+- لیست کامیت‌های اخیر
+
+### سایر
+- اطلاعات حساب کاربری شما
+- ساخت Gist
+- ستاره دادن / برداشتن ستاره از ریپو
+
+---
+
+## نصب و راه‌اندازی (فقط این کارها را انجام دهید)
+
+### ۱. کلون کردن پروژه
 ```bash
 git clone https://github.com/hadi4293/github-omni-agent.git
 cd github-omni-agent
+```
+
+### ۲. نصب وابستگی‌ها
+```bash
 pip install -r requirements.txt
+```
+
+### ۳. ساخت فایل `.env`
+```bash
 cp .env.example .env
 ```
 
-سپس فایل `.env` رو باز کن و این دو تا رو پر کن:
+سپس فایل `.env` را با ویرایشگر باز کنید و دو مقدار زیر را پر کنید:
 
 ```env
-GEMINI_API_KEY=your_google_ai_studio_key
-GITHUB_TOKEN=your_github_personal_access_token
+GEMINI_API_KEY=کلید_گوگل_شما
+GITHUB_TOKEN=توکن_گیت‌هاب_شما
 ```
 
-### چطور کلیدها رو بگیریم؟
+#### چطور کلیدها را بگیریم؟
 
-1. **Gemini API Key (رایگان):**
-   - برو به [aistudio.google.com](https://aistudio.google.com)
-   - Get API Key بزن و کپی کن
+**الف) Gemini API Key (کاملاً رایگان)**
+1. برو به: https://aistudio.google.com/apikey
+2. روی **Create API key** بزن
+3. کلید را کپی کن و در `.env` بگذار
 
-2. **GitHub Token:**
-   - برو به GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
-   - New token (classic) بساز
-   - دسترسی‌های پیشنهادی: `repo`, `workflow`, `read:org`, `gist`
-   - توکن رو کپی کن
+**ب) GitHub Token**
+1. برو به: https://github.com/settings/tokens
+2. **Generate new token (classic)** را بزن
+3. نام دلخواه بگذار (مثلاً `omni-agent`)
+4. دسترسی‌های زیر را تیک بزن:
+   - `repo` (کامل)
+   - `workflow`
+   - `read:org`
+   - `gist`
+5. توکن را کپی کن و در `.env` بگذار
 
-## اجرا
+> **هشدار امنیتی:** هرگز توکن را در چت یا جایی عمومی نفرست. فقط داخل فایل `.env` روی کامپیوتر خودت باشد.
 
+### ۴. اجرا
 ```bash
 python main.py
 ```
 
-بعدش فقط فارسی یا انگلیسی بنویس، مثلاً:
+---
 
-- «لیست ریپوهای من رو نشون بده»
-- «توی ریپوی X فایل README رو بخون»
-- «یه issue جدید توی ریپوی Y بساز با عنوان ...»
-- «این کد رو توی فایل Z کامیت کن»
-- «PR بساز از branch feature به main»
+## مثال دستورات
+
+```
+لیست ریپوهای من رو نشون بده
+ساختار ریپوی github-omni-agent رو ببین
+محتوای فایل README.md رو از ریپوی github-omni-agent بخون
+یه issue جدید توی github-omni-agent بساز با عنوان «تست ایجنت»
+روی issue شماره 1 کامنت بذار: سلام
+یه برنچ جدید به اسم feature/test بساز
+لیست PRهای باز رو نشون بده
+اطلاعات حساب من رو بگو
+```
+
+---
 
 ## امنیت
 
-عملیات‌های خطرناک (حذف فایل، حذف ریپو، force push و ...) همیشه ازت تأیید می‌گیرن قبل از اجرا.
+عملیات‌های زیر **همیشه** از شما تأیید صریح می‌گیرند قبل از اجرا:
+
+- حذف فایل
+- حذف ریپوزیتوری
+- Merge کردن Pull Request
+
+---
 
 ## ساختار پروژه
 
 ```
-main.py              # نقطه ورود CLI
-agent.py             # هسته ایجنت + Gemini Function Calling
-tools/
-  github_tools.py    # تمام ابزارهای گیت‌هاب
-requirements.txt
-.env.example
+github-omni-agent/
+├── main.py              # نقطه ورود CLI
+├── agent.py             # هسته ایجنت + Gemini Function Calling
+├── tools/
+│   ├── __init__.py
+│   └── github_tools.py  # تمام ابزارهای گیت‌هاب
+├── requirements.txt
+├── .env.example
+├── .gitignore
+└── README.md
 ```
 
-ساخته شده با ❤️ برای استفاده شخصی و رایگان.
+---
+
+ساخته شده برای استفاده شخصی و رایگان.
