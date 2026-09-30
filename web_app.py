@@ -11,14 +11,15 @@ from pydantic import BaseModel
 
 from env_loader import load_project_env, env_status
 
-# لود .env قبل از هر چیز
 _ENV_PATH, _ENV_LOGS = load_project_env()
 for line in _ENV_LOGS:
     print("[env]", line)
 
 from agent import OmniAgent
 from memory_patch import apply_memory
+from extra_tools_patch import apply_extra_tools
 
+OmniAgent = apply_extra_tools(OmniAgent)
 OmniAgent = apply_memory(OmniAgent)
 
 app = FastAPI(title="GitHub Omni Agent")
@@ -33,10 +34,8 @@ def get_agent() -> OmniAgent:
     if _agent is not None:
         return _agent
 
-    # دوباره تلاش برای لود (اگر بعداً فایل ساخته شده باشد)
     global _ENV_PATH, _ENV_LOGS
     _ENV_PATH, _ENV_LOGS = load_project_env()
-
     st = env_status()
     print("[env] status:", st)
 
@@ -50,10 +49,7 @@ def get_agent() -> OmniAgent:
             "کلیدهای زیر پیدا نشد: " + ", ".join(missing) + "\n\n"
             + f"مسیر .env لودشده: {_ENV_PATH or 'هیچ'}\n"
             + "فایل .env باید این دو خط را داشته باشد:\n"
-            + "GEMINI_API_KEY=...\n"
-            + "GITHUB_TOKEN=...\n\n"
-            + "بدون فاصله دور = و بدون کوتیشن.\n"
-            + f"جستجو شد در:\n{chr(10).join('  ' + l for l in _ENV_LOGS)}"
+            + "GEMINI_API_KEY=...\nGITHUB_TOKEN=...\n"
         )
         _agent_error = msg
         raise RuntimeError(msg)
@@ -98,10 +94,7 @@ async def api_chat(req: ChatRequest):
         text = (req.message or "").strip()
         if not text:
             return JSONResponse({"ok": True, "reply": "پیام خالی بود.", "needs_confirm": False})
-
-        reply = agent.run(text)
-        reply = reply if reply is not None else ""
-
+        reply = agent.run(text) or ""
         if _pending_confirm and not _pending_confirm.get("approved"):
             return JSONResponse({
                 "ok": True,
@@ -109,7 +102,6 @@ async def api_chat(req: ChatRequest):
                 "needs_confirm": True,
                 "confirm_description": _pending_confirm.get("description", ""),
             })
-
         return JSONResponse({"ok": True, "reply": reply, "needs_confirm": False})
     except Exception as e:
         print("[api/chat ERROR]", traceback.format_exc())
@@ -124,11 +116,9 @@ async def api_confirm(req: ConfirmRequest):
     global _pending_confirm
     if not _pending_confirm:
         return JSONResponse({"ok": True, "reply": "عملیات معلقی نیست.", "needs_confirm": False})
-
     if not req.approved:
         _pending_confirm = None
         return JSONResponse({"ok": True, "reply": "عملیات لغو شد.", "needs_confirm": False})
-
     try:
         agent = get_agent()
         original = agent.confirm_callback
@@ -158,19 +148,8 @@ async def api_health():
         except Exception as e:
             err = f"{type(e).__name__}: {e}"
     else:
-        err = (
-            f"env missing. loaded_from={_ENV_PATH}. "
-            f"GEMINI={st['GEMINI_API_KEY']} GITHUB={st['GITHUB_TOKEN']}"
-        )
-
-    return {
-        "ok": st["ok"] and err is None,
-        "model": model,
-        "error": err,
-        "env_path": str(_ENV_PATH) if _ENV_PATH else None,
-        "env_logs": _ENV_LOGS,
-        "env_status": st,
-    }
+        err = f"env missing. loaded_from={_ENV_PATH}"
+    return {"ok": st["ok"] and err is None, "model": model, "error": err}
 
 
 PAGE = r'''<!DOCTYPE html>
@@ -186,8 +165,7 @@ PAGE = r'''<!DOCTYPE html>
     --border:rgba(255,255,255,0.07); --text:#ececf1; --muted:#8b8b9e;
     --accent2:#a29bfe;
     --user:linear-gradient(135deg,#6c5ce7 0%,#4834d4 100%);
-    --success:#00d2a0; --warning:#f0b429; --danger:#ff6b6b;
-    --radius:16px;
+    --success:#00d2a0; --warning:#f0b429; --danger:#ff6b6b; --radius:16px;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;font-family:'Vazirmatn',Tahoma,sans-serif;background:var(--bg);color:var(--text);overflow:hidden}
@@ -260,8 +238,8 @@ PAGE = r'''<!DOCTYPE html>
       <div class="avatar">AI</div>
       <div class="bubble">سلام 👋 من GitHub Omni Agent هستم.
 
-دستورات را فارسی یا انگلیسی بنویس.
-حافظه مکالمه فعال است — اگر خواستی پاک شود بنویس: پاک کردن حافظه</div>
+ریپو، فایل، Issue، PR، Actions، Release و Codespace را پشتیبانی می‌کنم.
+حافظه فعال است. برای پاک کردن بنویس: پاک کردن حافظه</div>
     </div>
   </div>
   <div id="confirm">
@@ -273,9 +251,10 @@ PAGE = r'''<!DOCTYPE html>
   </div>
   <div id="bottom">
     <div class="suggestions" id="suggestions">
-      <button class="chip" type="button" data-q="لیست ریپوهای من رو نشون بده">📦 ریپوهای من</button>
-      <button class="chip" type="button" data-q="اطلاعات حساب من رو بگو">👤 حساب من</button>
-      <button class="chip" type="button" data-q="ساختار ریپوی github-omni-agent رو ببین">📁 ساختار پروژه</button>
+      <button class="chip" type="button" data-q="لیست ریپوهای من رو نشون بده">📦 ریپوها</button>
+      <button class="chip" type="button" data-q="workflowهای ریپوی github-omni-agent رو لیست کن">⚙️ Actions</button>
+      <button class="chip" type="button" data-q="آخرین releaseهای github-omni-agent">🏷️ Releases</button>
+      <button class="chip" type="button" data-q="codespaceهای من رو نشون بده">💻 Codespaces</button>
     </div>
     <div class="input-wrap">
       <textarea id="inp" rows="1" placeholder="پیام خود را بنویس..."></textarea>
@@ -343,12 +322,7 @@ PAGE = r'''<!DOCTYPE html>
   for(var i=0;i<chips.length;i++){ chips[i].addEventListener("click",function(){ send(this.getAttribute("data-q")); }); }
   fetch("/api/health").then(function(r){return r.json();}).then(function(d){
     if(d.model) document.getElementById("model-label").textContent=d.model+" · رایگان";
-    if(!d.ok){
-      badge.className="err"; badge.innerHTML='<span class="dot"></span> مشکل .env';
-      var msg="مشکل فایل .env\n";
-      if(d.error) msg+=d.error;
-      addMsg(msg,"err");
-    }
+    if(!d.ok){ badge.className="err"; badge.innerHTML='<span class="dot"></span> مشکل .env'; if(d.error) addMsg("مشکل: "+d.error,"err"); }
   }).catch(function(){});
   inp.focus();
 })();
