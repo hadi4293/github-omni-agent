@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""
+GitHub Omni Agent - CLI
+ایجنت همه‌کاره رایگان گیت‌هاب با Gemini
+"""
+
+import os
+import sys
+from dotenv import load_dotenv
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+
+from agent import OmniAgent
+
+load_dotenv()
+console = Console()
+
+
+def check_env():
+    missing = []
+    if not os.getenv("GEMINI_API_KEY"):
+        missing.append("GEMINI_API_KEY")
+    if not os.getenv("GITHUB_TOKEN"):
+        missing.append("GITHUB_TOKEN")
+
+    if missing:
+        console.print(
+            Panel(
+                f"[red]متغیرهای محیطی زیر تنظیم نشده‌اند:[/red]\n"
+                + "\n".join(f"  • {m}" for m in missing)
+                + "\n\nفایل [bold].env[/bold] را از روی [bold].env.example[/bold] بساز و پر کن.",
+                title="خطا",
+                border_style="red",
+            )
+        )
+        sys.exit(1)
+
+
+def main():
+    check_env()
+
+    console.print(
+        Panel(
+            "[bold cyan]GitHub Omni Agent[/bold cyan]\n"
+            "ایجنت همه‌کاره و رایگان گیت‌هاب\n"
+            "دستورات را به فارسی یا انگلیسی بنویس. برای خروج [bold]exit[/bold] یا [bold]خروج[/bold] بزن.",
+            border_style="cyan",
+        )
+    )
+
+    agent = OmniAgent(
+        gemini_api_key=os.getenv("GEMINI_API_KEY"),
+        github_token=os.getenv("GITHUB_TOKEN"),
+    )
+
+    while True:
+        try:
+            user_input = console.input("\n[bold green]تو › [/bold green]").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]خداحافظ![/yellow]")
+            break
+
+        if not user_input:
+            continue
+
+        if user_input.lower() in ("exit", "quit", "خروج", "q"):
+            console.print("[yellow]خداحافظ![/yellow]")
+            break
+
+        with console.status("[bold cyan]در حال فکر کردن...[/bold cyan]"):
+            try:
+                response = agent.run(user_input)
+            except Exception as e:
+                console.print(f"[red]خطا:[/red] {e}")
+                continue
+
+        console.print(Panel(Markdown(response), title="ایجنت", border_style="blue"))
+
+
+if __name__ == "__main__":
+    main()
