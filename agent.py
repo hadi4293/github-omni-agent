@@ -1,14 +1,13 @@
 """
-هسته ایجنت - Gemini Function Calling + تمام ابزارهای گیت‌هاب
-مدل: gemini-3.5-flash-lite
+هسته ایجنت - Gemini Function Calling + GitHub Tools
+Failover خودکار بین چند مدل وقتی لیمیت بخورد
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional, Callable
+from typing import Any, Optional, Callable, List
 
 import google.generativeai as genai
-from google.generativeai.types import generation_types
 
 from tools.github_tools import GitHubTools
 
@@ -28,13 +27,35 @@ SYSTEM_PROMPT = """تو یک ایجنت هوشمند و همه‌کاره برا
 7. هرگز توکن یا کلید API را در پاسخ‌ها نشان نده.
 """
 
-# مدل‌های جایگزین اگر مدل اصلی در دسترس نبود
-MODEL_CANDIDATES = [
-    "gemini-3.5-flash-lite",
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
+# اولویت بر اساس لیمیت رایگان کاربر (RPD بالا اول):
+# 3.5-flash-lite و 3.1-flash-lite → حدود 500/روز
+# بقیه Flashها → حدود 20/روز
+# 3.8-flash را آخر می‌گذاریم چون RPD کاربر پر شده بود
+MODEL_CHAIN: List[str] = [
+    "gemini-3.5-flash-lite",   # 500 RPD — بهترین
+    "gemini-3.1-flash-lite",   # 500 RPD
+    "gemini-2.5-flash-lite",   # 20 RPD
+    "gemini-2.5-flash",        # 20 RPD
+    "gemini-3.6-flash",        # 20 RPD
+    "gemini-3.7-flash",        # 20 RPD
+    "gemini-3.5-flash",        # 20 RPD
+    "gemini-3-flash",          # 20 RPD
+    "gemini-3.8-flash",        # 20 RPD — کاربر قبلاً پر کرده بود
 ]
+
+
+def _is_rate_limit_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    name = type(err).__name__.lower()
+    needles = [
+        "429",
+        "resource_exhausted",
+        "rate limit",
+        "quota",
+        "exceeded",
+        "too many requests",
+    ]
+    return any(n in msg for n in needles) or "quota" in name or "resource" in name
 
 
 class OmniAgent:
@@ -48,30 +69,58 @@ class OmniAgent:
         self.gh = GitHubTools(github_token)
         self.confirm_callback = confirm_callback
         self.tools = self._build_tools()
-        self.model_name = None
+
+        self.model_name: Optional[str] = None
         self.model = None
         self.chat = None
-        self._init_model()
+        self._exhausted: set[str] = set()  # مدل‌هایی که امروز لیمیت خوردن
 
-    def _init_model(self):
-        last_err = None
-        for name in MODEL_CANDIDATES:
+        self._pick_model(reset_chat=True)
+
+    def _pick_model(self, reset_chat: bool = False) -> str:
+        last_err: Optional[Exception] = None
+        for name in MODEL_CHAIN:
+            if name in self._exhausted:
+                continue
             try:
                 model = genai.GenerativeModel(
                     model_name=name,
                     system_instruction=SYSTEM_PROMPT,
                     tools=self.tools,
                 )
-                # تست خیلی سبک — فقط ساخت مدل کافی است
                 self.model = model
                 self.model_name = name
-                self.chat = self.model.start_chat(enable_automatic_function_calling=False)
-                print(f"[agent] using model: {name}")
-                return
+                if reset_chat or self.chat is None:
+                    self.chat = self.model.start_chat(
+                        enable_automatic_function_calling=False
+                    )
+                else:
+                    # چت را روی مدل جدید از نو شروع می‌کنیم (تاریخچه API بین مدل‌ها مشترک نیست)
+                    self.chat = self.model.start_chat(
+                        enable_automatic_function_calling=False
+                    )
+                print(f"[agent] active model: {name}")
+                return name
             except Exception as e:
                 last_err = e
-                print(f"[agent] model {name} failed: {e}")
-        raise RuntimeError(f"هیچ مدل Gemini در دسترس نبود. آخرین خطا: {last_err}")
+                print(f"[agent] cannot init {name}: {e}")
+                if _is_rate_limit_error(e):
+                    self._exhausted.add(name)
+
+        raise RuntimeError(
+            "همه مدل‌های موجود لیمیت خورده‌اند یا در دسترس نیستند. "
+            f"آخرین خطا: {last_err}"
+        )
+
+    def _switch_on_limit(self, failed_model: str) -> bool:
+        """مدل فعلی را exhausted علامت بزن و بعدی را بردار. True اگر موفق."""
+        print(f"[agent] rate-limit on {failed_model}, switching...")
+        self._exhausted.add(failed_model)
+        try:
+            self._pick_model(reset_chat=True)
+            return True
+        except RuntimeError:
+            return False
 
     def _build_tools(self):
         return [
@@ -527,19 +576,15 @@ class OmniAgent:
             if name in mapping:
                 return mapping[name]()
             return f"ابزار ناشناخته: {name}"
-
         except Exception as e:
             return f"خطا در اجرای {name}: {type(e).__name__}: {e}"
 
     def _extract_parts(self, response):
-        """استخراج امن function_call و text از پاسخ Gemini"""
         function_calls = []
         texts = []
-
         try:
             cands = getattr(response, "candidates", None) or []
             if not cands:
-                # گاهی prompt feedback دارد
                 feedback = getattr(response, "prompt_feedback", None)
                 if feedback:
                     return [], [f"پاسخ مدل خالی بود. feedback: {feedback}"]
@@ -560,16 +605,50 @@ class OmniAgent:
                     texts.append(t)
         except Exception as e:
             return [], [f"خطا در خواندن پاسخ مدل: {e}"]
-
         return function_calls, texts
 
-    def run(self, user_message: str) -> str:
-        try:
-            response = self.chat.send_message(user_message)
-        except Exception as e:
-            return f"خطا در ارتباط با Gemini ({self.model_name}): {type(e).__name__}: {e}"
+    def _send_with_failover(self, payload):
+        """ارسال پیام؛ اگر 429 شد مدل بعدی را امتحان می‌کند."""
+        attempts = 0
+        max_attempts = len(MODEL_CHAIN) + 1
 
-        # حداکثر چند دور function calling
+        while attempts < max_attempts:
+            attempts += 1
+            current = self.model_name or "?"
+            try:
+                return self.chat.send_message(payload)
+            except Exception as e:
+                if _is_rate_limit_error(e):
+                    switched = self._switch_on_limit(current)
+                    if switched:
+                        # یک‌بار با مدل جدید همان پیام را می‌فرستیم
+                        # اگر payload لیست function response باشد، فقط متن راهنما می‌فرستیم
+                        if isinstance(payload, str):
+                            continue
+                        # برای function response روی مدل جدید تاریخچه از دست رفته؛
+                        # پیام کوتاه می‌فرستیم تا حلقه بیرونی ادامه دهد
+                        try:
+                            return self.chat.send_message(
+                                "ادامه بده و نتیجه ابزار را در نظر بگیر."
+                            )
+                        except Exception as e2:
+                            if _is_rate_limit_error(e2):
+                                continue
+                            raise
+                    return None  # همه مدل‌ها تمام شدند — caller هندل می‌کند
+                raise
+
+        return None
+
+    def run(self, user_message: str) -> str:
+        response = self._send_with_failover(user_message)
+        if response is None:
+            return (
+                "همه مدل‌های Gemini لیمیت روزانه/دقیقه‌ای خورده‌اند.\n"
+                "کمی صبر کن یا فردا دوباره تلاش کن.\n"
+                f"مدل‌های ازکارافتاده: {', '.join(sorted(self._exhausted)) or '—'}"
+            )
+
         for _ in range(8):
             function_calls, texts = self._extract_parts(response)
 
@@ -583,7 +662,7 @@ class OmniAgent:
                     args = dict(fc.args) if fc.args else {}
                 except Exception:
                     args = {}
-                print(f"[agent] tool: {name} args={args}")
+                print(f"[agent] tool={name} model={self.model_name} args={args}")
                 result = self._execute_tool(name, args)
                 function_responses.append(
                     genai.protos.Part(
@@ -594,9 +673,11 @@ class OmniAgent:
                     )
                 )
 
-            try:
-                response = self.chat.send_message(function_responses)
-            except Exception as e:
-                return f"خطا بعد از اجرای ابزار: {type(e).__name__}: {e}"
+            response = self._send_with_failover(function_responses)
+            if response is None:
+                return (
+                    "نتیجه ابزار آماده شد ولی همه مدل‌ها لیمیت خوردند.\n"
+                    f"مدل‌های ازکارافتاده: {', '.join(sorted(self._exhausted))}"
+                )
 
         return "تعداد دورهای ابزار بیش از حد شد. لطفاً دوباره تلاش کن."
