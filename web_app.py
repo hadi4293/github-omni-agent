@@ -3,15 +3,19 @@
 
 import os
 import traceback
+from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from agent import OmniAgent
+# همیشه .env را از کنار همین فایل بخوان (نه از cwd)
+BASE_DIR = Path(__file__).resolve().parent
+ENV_PATH = BASE_DIR / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
 
-load_dotenv()
+from agent import OmniAgent
 
 app = FastAPI(title="GitHub Omni Agent")
 
@@ -20,15 +24,41 @@ _pending_confirm: Optional[dict] = None
 _agent_error: Optional[str] = None
 
 
+def _mask(value: Optional[str]) -> str:
+    if not value:
+        return "(خالی)"
+    if len(value) <= 8:
+        return "***"
+    return value[:4] + "..." + value[-4:]
+
+
 def get_agent() -> OmniAgent:
     global _agent, _agent_error
     if _agent is not None:
         return _agent
 
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    github_token = os.getenv("GITHUB_TOKEN")
-    if not gemini_key or not github_token:
-        raise RuntimeError("GEMINI_API_KEY یا GITHUB_TOKEN در فایل .env تنظیم نشده")
+    gemini_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    github_token = (os.getenv("GITHUB_TOKEN") or "").strip()
+
+    print(f"[env] path={ENV_PATH} exists={ENV_PATH.exists()}")
+    print(f"[env] GEMINI_API_KEY={_mask(gemini_key)}")
+    print(f"[env] GITHUB_TOKEN={_mask(github_token)}")
+
+    missing = []
+    if not gemini_key:
+        missing.append("GEMINI_API_KEY")
+    if not github_token:
+        missing.append("GITHUB_TOKEN")
+
+    if missing:
+        msg = (
+            "این کلیدها در فایل .env پیدا نشد: "
+            + ", ".join(missing)
+            + f"\nمسیر مورد انتظار: {ENV_PATH}"
+            + "\nمطمئن شو فایل .env کنار web_app.py است و بعد از ویرایش سرور را ری‌استارت کردی."
+        )
+        _agent_error = msg
+        raise RuntimeError(msg)
 
     def web_confirm(description: str) -> bool:
         global _pending_confirm
@@ -88,7 +118,7 @@ async def api_chat(req: ChatRequest):
         print("[api/chat ERROR]", tb)
         return JSONResponse(
             {"ok": False, "reply": f"خطای سرور: {type(e).__name__}: {e}", "needs_confirm": False},
-            status_code=200,  # عمداً 200 تا UI پیام را نشان دهد
+            status_code=200,
         )
 
 
@@ -120,16 +150,35 @@ async def api_confirm(req: ConfirmRequest):
 
 @app.get("/api/health")
 async def api_health():
-    has_keys = bool(os.getenv("GEMINI_API_KEY") and os.getenv("GITHUB_TOKEN"))
+    gemini_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    github_token = (os.getenv("GITHUB_TOKEN") or "").strip()
+    has_keys = bool(gemini_key and github_token)
     model = None
-    err = _agent_error
-    try:
-        if has_keys:
+    err = None
+
+    if not ENV_PATH.exists():
+        err = f"فایل .env پیدا نشد در: {ENV_PATH}"
+    elif not has_keys:
+        missing = []
+        if not gemini_key:
+            missing.append("GEMINI_API_KEY")
+        if not github_token:
+            missing.append("GITHUB_TOKEN")
+        err = "خالی است: " + ", ".join(missing)
+    else:
+        try:
             a = get_agent()
             model = a.model_name
-    except Exception as e:
-        err = f"{type(e).__name__}: {e}"
-    return {"ok": has_keys and err is None, "model": model, "error": err}
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+
+    return {
+        "ok": has_keys and err is None,
+        "model": model,
+        "error": err,
+        "env_path": str(ENV_PATH),
+        "env_exists": ENV_PATH.exists(),
+    }
 
 
 PAGE = r'''<!DOCTYPE html>
@@ -142,68 +191,49 @@ PAGE = r'''<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #07070c;
-    --surface: #12121a;
-    --surface2: #1a1a24;
-    --border: rgba(255,255,255,0.07);
-    --text: #ececf1;
-    --muted: #8b8b9e;
-    --accent: #6c5ce7;
+    --bg: #07070c; --surface: #12121a; --surface2: #1a1a24;
+    --border: rgba(255,255,255,0.07); --text: #ececf1; --muted: #8b8b9e;
     --accent2: #a29bfe;
     --user: linear-gradient(135deg, #6c5ce7 0%, #4834d4 100%);
-    --success: #00d2a0;
-    --warning: #f0b429;
-    --danger: #ff6b6b;
+    --success: #00d2a0; --warning: #f0b429; --danger: #ff6b6b;
     --radius: 16px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
-    height: 100%;
-    font-family: 'Vazirmatn', Tahoma, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    overflow: hidden;
+    height: 100%; font-family: 'Vazirmatn', Tahoma, sans-serif;
+    background: var(--bg); color: var(--text); overflow: hidden;
   }
   body::before {
-    content: '';
-    position: fixed; top: -40%; left: -20%;
+    content: ''; position: fixed; top: -40%; left: -20%;
     width: 70%; height: 70%;
     background: radial-gradient(circle, rgba(108,92,231,0.12) 0%, transparent 70%);
     pointer-events: none; z-index: 0;
   }
   body::after {
-    content: '';
-    position: fixed; bottom: -30%; right: -15%;
+    content: ''; position: fixed; bottom: -30%; right: -15%;
     width: 55%; height: 55%;
     background: radial-gradient(circle, rgba(0,210,160,0.06) 0%, transparent 70%);
     pointer-events: none; z-index: 0;
   }
   #app {
-    position: relative; z-index: 1;
-    height: 100%; display: flex; flex-direction: column;
-    max-width: 820px; margin: 0 auto;
+    position: relative; z-index: 1; height: 100%;
+    display: flex; flex-direction: column; max-width: 820px; margin: 0 auto;
   }
   header {
-    flex-shrink: 0;
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 20px;
-    border-bottom: 1px solid var(--border);
-    background: rgba(18,18,26,0.75);
-    backdrop-filter: blur(20px);
+    flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    background: rgba(18,18,26,0.75); backdrop-filter: blur(20px);
   }
   .brand { display: flex; align-items: center; gap: 12px; }
   .logo {
-    width: 40px; height: 40px; border-radius: 12px;
-    background: var(--user);
-    display: grid; place-items: center;
-    font-weight: 700; font-size: 18px; color: #fff;
+    width: 40px; height: 40px; border-radius: 12px; background: var(--user);
+    display: grid; place-items: center; font-weight: 700; font-size: 18px; color: #fff;
     box-shadow: 0 4px 20px rgba(108,92,231,0.4);
   }
   .brand-text h1 { font-size: 15px; font-weight: 600; }
   .brand-text p { font-size: 11px; color: var(--muted); margin-top: 1px; }
   #badge {
-    font-size: 11px; font-weight: 500;
-    padding: 5px 12px; border-radius: 20px;
+    font-size: 11px; font-weight: 500; padding: 5px 12px; border-radius: 20px;
     background: rgba(0,210,160,0.1); color: var(--success);
     border: 1px solid rgba(0,210,160,0.25);
     display: flex; align-items: center; gap: 6px;
@@ -220,9 +250,7 @@ PAGE = r'''<!DOCTYPE html>
     background: rgba(255,107,107,0.1); color: var(--danger);
     border-color: rgba(255,107,107,0.3);
   }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
-  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
   #messages {
     flex: 1; overflow-y: auto; padding: 24px 20px;
     display: flex; flex-direction: column; gap: 14px;
@@ -235,26 +263,21 @@ PAGE = r'''<!DOCTYPE html>
     display: flex; gap: 10px;
     animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
   }
-  .row.bot { flex-direction: row-reverse; }
+  .row.bot, .row.err { flex-direction: row-reverse; }
   .avatar {
-    width: 32px; height: 32px; border-radius: 10px;
-    flex-shrink: 0; display: grid; place-items: center;
-    font-size: 13px; font-weight: 700; margin-top: 2px;
+    width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
+    display: grid; place-items: center; font-size: 13px; font-weight: 700; margin-top: 2px;
   }
-  .row.me .avatar {
-    background: var(--user); color: #fff;
-  }
+  .row.me .avatar { background: var(--user); color: #fff; }
   .row.bot .avatar, .row.err .avatar {
     background: var(--surface2); border: 1px solid var(--border); color: var(--accent2);
   }
   .bubble {
     max-width: 75%; padding: 12px 16px; border-radius: var(--radius);
-    font-size: 14px; line-height: 1.7;
-    white-space: pre-wrap; word-break: break-word;
+    font-size: 14px; line-height: 1.7; white-space: pre-wrap; word-break: break-word;
   }
   .row.me .bubble {
-    background: var(--user); color: #fff;
-    border-bottom-right-radius: 4px;
+    background: var(--user); color: #fff; border-bottom-right-radius: 4px;
     box-shadow: 0 4px 18px rgba(108,92,231,0.25);
   }
   .row.bot .bubble {
@@ -262,21 +285,17 @@ PAGE = r'''<!DOCTYPE html>
     color: var(--text); border-bottom-left-radius: 4px;
   }
   .row.err .bubble {
-    background: rgba(255,107,107,0.08);
-    border: 1px solid rgba(255,107,107,0.25);
+    background: rgba(255,107,107,0.08); border: 1px solid rgba(255,107,107,0.25);
     color: #ffa8a8; border-bottom-left-radius: 4px;
   }
-  .typing-row {
-    display: flex; flex-direction: row-reverse; gap: 10px;
-  }
+  .typing-row { display: flex; flex-direction: row-reverse; gap: 10px; }
   .typing-bubble {
     background: var(--surface); border: 1px solid var(--border);
     border-radius: var(--radius); border-bottom-left-radius: 4px;
     padding: 14px 18px; display: flex; gap: 5px; align-items: center;
   }
   .typing-bubble span {
-    width: 7px; height: 7px; border-radius: 50%;
-    background: var(--accent2);
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent2);
     animation: bounce 1.4s infinite ease-in-out both;
   }
   .typing-bubble span:nth-child(2) { animation-delay: 0.16s; }
@@ -291,8 +310,7 @@ PAGE = r'''<!DOCTYPE html>
   }
   #confirm {
     display: none; margin: 0 20px 10px; padding: 14px 16px;
-    background: rgba(240,180,41,0.08);
-    border: 1px solid rgba(240,180,41,0.3);
+    background: rgba(240,180,41,0.08); border: 1px solid rgba(240,180,41,0.3);
     border-radius: 14px;
   }
   #confirm.show { display: block; }
@@ -307,8 +325,7 @@ PAGE = r'''<!DOCTYPE html>
   #bottom {
     flex-shrink: 0; padding: 12px 20px 18px;
     border-top: 1px solid var(--border);
-    background: rgba(18,18,26,0.75);
-    backdrop-filter: blur(20px);
+    background: rgba(18,18,26,0.75); backdrop-filter: blur(20px);
   }
   .suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
   .chip {
@@ -525,7 +542,10 @@ PAGE = r'''<!DOCTYPE html>
     if (!d.ok) {
       badge.className = "err";
       badge.innerHTML = '<span class="dot"></span> مشکل تنظیمات';
-      if (d.error) addMsg("مشکل راه‌اندازی: " + d.error, "err");
+      var msg = "مشکل تنظیمات\n";
+      if (d.error) msg += d.error + "\n";
+      if (d.env_path) msg += "مسیر .env: " + d.env_path;
+      addMsg(msg, "err");
     }
   }).catch(function () {});
 
@@ -540,5 +560,6 @@ PAGE = r'''<!DOCTYPE html>
 if __name__ == "__main__":
     import uvicorn
     print("\n  GitHub Omni Agent")
+    print(f"  .env path: {ENV_PATH} (exists={ENV_PATH.exists()})")
     print("  http://127.0.0.1:8000\n")
     uvicorn.run("web_app:app", host="127.0.0.1", port=8000, reload=False)
