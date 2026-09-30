@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any, Optional, Callable
 
 import google.generativeai as genai
+from google.generativeai.types import generation_types
 
 from tools.github_tools import GitHubTools
 
@@ -27,6 +28,14 @@ SYSTEM_PROMPT = """تو یک ایجنت هوشمند و همه‌کاره برا
 7. هرگز توکن یا کلید API را در پاسخ‌ها نشان نده.
 """
 
+# مدل‌های جایگزین اگر مدل اصلی در دسترس نبود
+MODEL_CANDIDATES = [
+    "gemini-3.5-flash-lite",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+]
+
 
 class OmniAgent:
     def __init__(
@@ -37,17 +46,32 @@ class OmniAgent:
     ):
         genai.configure(api_key=gemini_api_key)
         self.gh = GitHubTools(github_token)
-        self.confirm_callback = confirm_callback  # برای وب/CLI
-
+        self.confirm_callback = confirm_callback
         self.tools = self._build_tools()
+        self.model_name = None
+        self.model = None
+        self.chat = None
+        self._init_model()
 
-        self.model = genai.GenerativeModel(
-            model_name="gemini-3.5-flash-lite",
-            system_instruction=SYSTEM_PROMPT,
-            tools=self.tools,
-        )
-
-        self.chat = self.model.start_chat(enable_automatic_function_calling=False)
+    def _init_model(self):
+        last_err = None
+        for name in MODEL_CANDIDATES:
+            try:
+                model = genai.GenerativeModel(
+                    model_name=name,
+                    system_instruction=SYSTEM_PROMPT,
+                    tools=self.tools,
+                )
+                # تست خیلی سبک — فقط ساخت مدل کافی است
+                self.model = model
+                self.model_name = name
+                self.chat = self.model.start_chat(enable_automatic_function_calling=False)
+                print(f"[agent] using model: {name}")
+                return
+            except Exception as e:
+                last_err = e
+                print(f"[agent] model {name} failed: {e}")
+        raise RuntimeError(f"هیچ مدل Gemini در دسترس نبود. آخرین خطا: {last_err}")
 
     def _build_tools(self):
         return [
@@ -395,7 +419,6 @@ class OmniAgent:
     def _ask_confirmation(self, description: str) -> bool:
         if self.confirm_callback:
             return self.confirm_callback(description)
-        # حالت CLI
         try:
             from rich.console import Console
             c = Console()
@@ -409,7 +432,7 @@ class OmniAgent:
         try:
             if name == "delete_file":
                 ok = self._ask_confirmation(
-                    f"حذف فایل `{args['path']}` از `{args['owner']}/{args['repo']}`"
+                    f"حذف فایل `{args.get('path')}` از `{args.get('owner')}/{args.get('repo')}`"
                 )
                 if not ok:
                     return "کاربر تأیید نکرد. عملیات لغو شد."
@@ -420,7 +443,7 @@ class OmniAgent:
 
             if name == "delete_repo":
                 ok = self._ask_confirmation(
-                    f"حذف کامل و دائمی ریپوی `{args['owner']}/{args['repo']}`"
+                    f"حذف کامل و دائمی ریپوی `{args.get('owner')}/{args.get('repo')}`"
                 )
                 if not ok:
                     return "کاربر تأیید نکرد. عملیات لغو شد."
@@ -428,7 +451,7 @@ class OmniAgent:
 
             if name == "merge_pull_request":
                 ok = self._ask_confirmation(
-                    f"Merge کردن PR #{args['pr_number']} در `{args['owner']}/{args['repo']}`"
+                    f"Merge کردن PR #{args.get('pr_number')} در `{args.get('owner')}/{args.get('repo')}`"
                 )
                 if not ok:
                     return "کاربر تأیید نکرد. عملیات لغو شد."
@@ -506,27 +529,61 @@ class OmniAgent:
             return f"ابزار ناشناخته: {name}"
 
         except Exception as e:
-            return f"خطا در اجرای {name}: {str(e)}"
+            return f"خطا در اجرای {name}: {type(e).__name__}: {e}"
+
+    def _extract_parts(self, response):
+        """استخراج امن function_call و text از پاسخ Gemini"""
+        function_calls = []
+        texts = []
+
+        try:
+            cands = getattr(response, "candidates", None) or []
+            if not cands:
+                # گاهی prompt feedback دارد
+                feedback = getattr(response, "prompt_feedback", None)
+                if feedback:
+                    return [], [f"پاسخ مدل خالی بود. feedback: {feedback}"]
+                return [], ["پاسخ مدل خالی بود (candidates خالی)."]
+
+            content = getattr(cands[0], "content", None)
+            if not content:
+                finish = getattr(cands[0], "finish_reason", None)
+                return [], [f"محتوای پاسخ خالی بود. finish_reason={finish}"]
+
+            parts = getattr(content, "parts", None) or []
+            for part in parts:
+                fc = getattr(part, "function_call", None)
+                if fc and getattr(fc, "name", None):
+                    function_calls.append(fc)
+                t = getattr(part, "text", None)
+                if t:
+                    texts.append(t)
+        except Exception as e:
+            return [], [f"خطا در خواندن پاسخ مدل: {e}"]
+
+        return function_calls, texts
 
     def run(self, user_message: str) -> str:
-        response = self.chat.send_message(user_message)
+        try:
+            response = self.chat.send_message(user_message)
+        except Exception as e:
+            return f"خطا در ارتباط با Gemini ({self.model_name}): {type(e).__name__}: {e}"
 
-        while True:
-            function_calls = []
-            for part in response.candidates[0].content.parts:
-                if part.function_call:
-                    function_calls.append(part.function_call)
+        # حداکثر چند دور function calling
+        for _ in range(8):
+            function_calls, texts = self._extract_parts(response)
 
             if not function_calls:
-                text_parts = [
-                    part.text for part in response.candidates[0].content.parts if part.text
-                ]
-                return "\n".join(text_parts) if text_parts else "پاسخی دریافت نشد."
+                return "\n".join(texts) if texts else "پاسخی از مدل دریافت نشد."
 
             function_responses = []
             for fc in function_calls:
                 name = fc.name
-                args = dict(fc.args) if fc.args else {}
+                try:
+                    args = dict(fc.args) if fc.args else {}
+                except Exception:
+                    args = {}
+                print(f"[agent] tool: {name} args={args}")
                 result = self._execute_tool(name, args)
                 function_responses.append(
                     genai.protos.Part(
@@ -537,4 +594,9 @@ class OmniAgent:
                     )
                 )
 
-            response = self.chat.send_message(function_responses)
+            try:
+                response = self.chat.send_message(function_responses)
+            except Exception as e:
+                return f"خطا بعد از اجرای ابزار: {type(e).__name__}: {e}"
+
+        return "تعداد دورهای ابزار بیش از حد شد. لطفاً دوباره تلاش کن."

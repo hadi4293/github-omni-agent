@@ -2,6 +2,7 @@
 """GitHub Omni Agent - Web UI (premium design)"""
 
 import os
+import traceback
 from typing import Optional
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -16,27 +17,35 @@ app = FastAPI(title="GitHub Omni Agent")
 
 _agent: Optional[OmniAgent] = None
 _pending_confirm: Optional[dict] = None
+_agent_error: Optional[str] = None
 
 
 def get_agent() -> OmniAgent:
-    global _agent
-    if _agent is None:
-        gemini_key = os.getenv("GEMINI_API_KEY")
-        github_token = os.getenv("GITHUB_TOKEN")
-        if not gemini_key or not github_token:
-            raise RuntimeError("GEMINI_API_KEY or GITHUB_TOKEN missing in .env")
+    global _agent, _agent_error
+    if _agent is not None:
+        return _agent
 
-        def web_confirm(description: str) -> bool:
-            global _pending_confirm
-            _pending_confirm = {"description": description, "approved": False}
-            return False
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    github_token = os.getenv("GITHUB_TOKEN")
+    if not gemini_key or not github_token:
+        raise RuntimeError("GEMINI_API_KEY یا GITHUB_TOKEN در فایل .env تنظیم نشده")
 
+    def web_confirm(description: str) -> bool:
+        global _pending_confirm
+        _pending_confirm = {"description": description, "approved": False}
+        return False
+
+    try:
         _agent = OmniAgent(
             gemini_api_key=gemini_key,
             github_token=github_token,
             confirm_callback=web_confirm,
         )
-    return _agent
+        _agent_error = None
+        return _agent
+    except Exception as e:
+        _agent_error = f"{type(e).__name__}: {e}"
+        raise
 
 
 class ChatRequest(BaseModel):
@@ -75,7 +84,12 @@ async def api_chat(req: ChatRequest):
 
         return JSONResponse({"ok": True, "reply": reply, "needs_confirm": False})
     except Exception as e:
-        return JSONResponse({"ok": False, "reply": f"خطا: {e}", "needs_confirm": False}, status_code=500)
+        tb = traceback.format_exc()
+        print("[api/chat ERROR]", tb)
+        return JSONResponse(
+            {"ok": False, "reply": f"خطای سرور: {type(e).__name__}: {e}", "needs_confirm": False},
+            status_code=200,  # عمداً 200 تا UI پیام را نشان دهد
+        )
 
 
 @app.post("/api/confirm")
@@ -97,13 +111,25 @@ async def api_confirm(req: ConfirmRequest):
         _pending_confirm = None
         return JSONResponse({"ok": True, "reply": reply or "", "needs_confirm": False})
     except Exception as e:
-        return JSONResponse({"ok": False, "reply": f"خطا: {e}", "needs_confirm": False})
+        print("[api/confirm ERROR]", traceback.format_exc())
+        return JSONResponse(
+            {"ok": False, "reply": f"خطا: {type(e).__name__}: {e}", "needs_confirm": False},
+            status_code=200,
+        )
 
 
 @app.get("/api/health")
 async def api_health():
     has_keys = bool(os.getenv("GEMINI_API_KEY") and os.getenv("GITHUB_TOKEN"))
-    return {"ok": has_keys, "model": "gemini-3.5-flash-lite"}
+    model = None
+    err = _agent_error
+    try:
+        if has_keys:
+            a = get_agent()
+            model = a.model_name
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+    return {"ok": has_keys and err is None, "model": model, "error": err}
 
 
 PAGE = r'''<!DOCTYPE html>
@@ -129,11 +155,8 @@ PAGE = r'''<!DOCTYPE html>
     --warning: #f0b429;
     --danger: #ff6b6b;
     --radius: 16px;
-    --shadow: 0 8px 32px rgba(0,0,0,0.4);
   }
-
   * { box-sizing: border-box; margin: 0; padding: 0; }
-
   html, body {
     height: 100%;
     font-family: 'Vazirmatn', Tahoma, sans-serif;
@@ -141,234 +164,123 @@ PAGE = r'''<!DOCTYPE html>
     color: var(--text);
     overflow: hidden;
   }
-
-  /* Ambient glow */
   body::before {
     content: '';
-    position: fixed;
-    top: -40%;
-    left: -20%;
-    width: 70%;
-    height: 70%;
+    position: fixed; top: -40%; left: -20%;
+    width: 70%; height: 70%;
     background: radial-gradient(circle, rgba(108,92,231,0.12) 0%, transparent 70%);
-    pointer-events: none;
-    z-index: 0;
+    pointer-events: none; z-index: 0;
   }
   body::after {
     content: '';
-    position: fixed;
-    bottom: -30%;
-    right: -15%;
-    width: 55%;
-    height: 55%;
+    position: fixed; bottom: -30%; right: -15%;
+    width: 55%; height: 55%;
     background: radial-gradient(circle, rgba(0,210,160,0.06) 0%, transparent 70%);
-    pointer-events: none;
-    z-index: 0;
+    pointer-events: none; z-index: 0;
   }
-
   #app {
-    position: relative;
-    z-index: 1;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    max-width: 820px;
-    margin: 0 auto;
+    position: relative; z-index: 1;
+    height: 100%; display: flex; flex-direction: column;
+    max-width: 820px; margin: 0 auto;
   }
-
-  /* ── Header ── */
   header {
     flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    display: flex; align-items: center; justify-content: space-between;
     padding: 14px 20px;
     border-bottom: 1px solid var(--border);
     background: rgba(18,18,26,0.75);
     backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
   }
-
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
+  .brand { display: flex; align-items: center; gap: 12px; }
   .logo {
-    width: 40px;
-    height: 40px;
-    border-radius: 12px;
+    width: 40px; height: 40px; border-radius: 12px;
     background: var(--user);
-    display: grid;
-    place-items: center;
-    font-weight: 700;
-    font-size: 18px;
-    color: #fff;
+    display: grid; place-items: center;
+    font-weight: 700; font-size: 18px; color: #fff;
     box-shadow: 0 4px 20px rgba(108,92,231,0.4);
-    position: relative;
   }
-  .logo::after {
-    content: '';
-    position: absolute;
-    inset: -2px;
-    border-radius: 14px;
-    background: linear-gradient(135deg, #a29bfe, #6c5ce7, #00d2a0);
-    z-index: -1;
-    opacity: 0.5;
-    filter: blur(6px);
-  }
-
-  .brand-text h1 {
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: -0.2px;
-  }
-  .brand-text p {
-    font-size: 11px;
-    color: var(--muted);
-    margin-top: 1px;
-  }
-
+  .brand-text h1 { font-size: 15px; font-weight: 600; }
+  .brand-text p { font-size: 11px; color: var(--muted); margin-top: 1px; }
   #badge {
-    font-size: 11px;
-    font-weight: 500;
-    padding: 5px 12px;
-    border-radius: 20px;
-    background: rgba(0,210,160,0.1);
-    color: var(--success);
+    font-size: 11px; font-weight: 500;
+    padding: 5px 12px; border-radius: 20px;
+    background: rgba(0,210,160,0.1); color: var(--success);
     border: 1px solid rgba(0,210,160,0.25);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    transition: all 0.3s;
+    display: flex; align-items: center; gap: 6px;
   }
   #badge .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: currentColor;
-    animation: pulse 2s infinite;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; animation: pulse 2s infinite;
   }
   #badge.busy {
-    background: rgba(108,92,231,0.12);
-    color: var(--accent2);
+    background: rgba(108,92,231,0.12); color: var(--accent2);
     border-color: rgba(108,92,231,0.3);
   }
   #badge.err {
-    background: rgba(255,107,107,0.1);
-    color: var(--danger);
+    background: rgba(255,107,107,0.1); color: var(--danger);
     border-color: rgba(255,107,107,0.3);
   }
-
   @keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.4; transform: scale(0.85); }
+    0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
   }
-
-  /* ── Messages ── */
   #messages {
-    flex: 1;
-    overflow-y: auto;
-    padding: 24px 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    scroll-behavior: smooth;
+    flex: 1; overflow-y: auto; padding: 24px 20px;
+    display: flex; flex-direction: column; gap: 14px;
   }
   #messages::-webkit-scrollbar { width: 4px; }
   #messages::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.1);
-    border-radius: 4px;
+    background: rgba(255,255,255,0.1); border-radius: 4px;
   }
-
   .row {
-    display: flex;
-    gap: 10px;
+    display: flex; gap: 10px;
     animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
   }
-  .row.me { flex-direction: row; }
   .row.bot { flex-direction: row-reverse; }
-
   .avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 10px;
-    flex-shrink: 0;
-    display: grid;
-    place-items: center;
-    font-size: 13px;
-    font-weight: 700;
-    margin-top: 2px;
+    width: 32px; height: 32px; border-radius: 10px;
+    flex-shrink: 0; display: grid; place-items: center;
+    font-size: 13px; font-weight: 700; margin-top: 2px;
   }
   .row.me .avatar {
-    background: var(--user);
-    color: #fff;
-    box-shadow: 0 2px 10px rgba(108,92,231,0.35);
+    background: var(--user); color: #fff;
   }
-  .row.bot .avatar {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    color: var(--accent2);
+  .row.bot .avatar, .row.err .avatar {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--accent2);
   }
-
   .bubble {
-    max-width: 75%;
-    padding: 12px 16px;
-    border-radius: var(--radius);
-    font-size: 14px;
-    line-height: 1.7;
-    white-space: pre-wrap;
-    word-break: break-word;
-    position: relative;
+    max-width: 75%; padding: 12px 16px; border-radius: var(--radius);
+    font-size: 14px; line-height: 1.7;
+    white-space: pre-wrap; word-break: break-word;
   }
   .row.me .bubble {
-    background: var(--user);
-    color: #fff;
+    background: var(--user); color: #fff;
     border-bottom-right-radius: 4px;
     box-shadow: 0 4px 18px rgba(108,92,231,0.25);
   }
   .row.bot .bubble {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text);
-    border-bottom-left-radius: 4px;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); border-bottom-left-radius: 4px;
   }
   .row.err .bubble {
     background: rgba(255,107,107,0.08);
     border: 1px solid rgba(255,107,107,0.25);
-    color: #ffa8a8;
-    border-bottom-left-radius: 4px;
+    color: #ffa8a8; border-bottom-left-radius: 4px;
   }
-
-  /* Typing indicator */
   .typing-row {
-    display: flex;
-    flex-direction: row-reverse;
-    gap: 10px;
-    animation: slideUp 0.3s ease;
+    display: flex; flex-direction: row-reverse; gap: 10px;
   }
   .typing-bubble {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    border-bottom-left-radius: 4px;
-    padding: 14px 18px;
-    display: flex;
-    gap: 5px;
-    align-items: center;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); border-bottom-left-radius: 4px;
+    padding: 14px 18px; display: flex; gap: 5px; align-items: center;
   }
   .typing-bubble span {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
+    width: 7px; height: 7px; border-radius: 50%;
     background: var(--accent2);
     animation: bounce 1.4s infinite ease-in-out both;
   }
-  .typing-bubble span:nth-child(1) { animation-delay: 0s; }
   .typing-bubble span:nth-child(2) { animation-delay: 0.16s; }
   .typing-bubble span:nth-child(3) { animation-delay: 0.32s; }
-
   @keyframes bounce {
     0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
     40% { transform: scale(1); opacity: 1; }
@@ -377,152 +289,70 @@ PAGE = r'''<!DOCTYPE html>
     from { opacity: 0; transform: translateY(12px); }
     to { opacity: 1; transform: translateY(0); }
   }
-
-  /* ── Confirm ── */
   #confirm {
-    display: none;
-    margin: 0 20px 10px;
-    padding: 14px 16px;
+    display: none; margin: 0 20px 10px; padding: 14px 16px;
     background: rgba(240,180,41,0.08);
     border: 1px solid rgba(240,180,41,0.3);
     border-radius: 14px;
-    animation: slideUp 0.3s ease;
   }
   #confirm.show { display: block; }
-  #confirm-msg {
-    font-size: 13px;
-    color: var(--warning);
-    margin-bottom: 10px;
-    line-height: 1.5;
-  }
+  #confirm-msg { font-size: 13px; color: var(--warning); margin-bottom: 10px; }
   .confirm-btns { display: flex; gap: 8px; }
   .confirm-btns button {
-    padding: 7px 18px;
-    border: none;
-    border-radius: 10px;
-    font-family: inherit;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: transform 0.15s, opacity 0.15s;
+    padding: 7px 18px; border: none; border-radius: 10px;
+    font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
   }
-  .confirm-btns button:active { transform: scale(0.96); }
-  #btn-yes {
-    background: var(--warning);
-    color: #1a1200;
-  }
-  #btn-yes:hover { opacity: 0.9; }
-  #btn-no {
-    background: var(--surface2);
-    color: var(--text);
-    border: 1px solid var(--border);
-  }
-  #btn-no:hover { background: #22222e; }
-
-  /* ── Input area ── */
+  #btn-yes { background: var(--warning); color: #1a1200; }
+  #btn-no { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
   #bottom {
-    flex-shrink: 0;
-    padding: 12px 20px 18px;
+    flex-shrink: 0; padding: 12px 20px 18px;
     border-top: 1px solid var(--border);
     background: rgba(18,18,26,0.75);
     backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
   }
-
+  .suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .chip {
+    font-size: 12px; padding: 6px 14px; border-radius: 20px;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--muted); cursor: pointer; font-family: inherit;
+  }
+  .chip:hover {
+    border-color: rgba(108,92,231,0.4); color: var(--accent2);
+    background: rgba(108,92,231,0.08);
+  }
   .input-wrap {
-    display: flex;
-    align-items: flex-end;
-    gap: 10px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    padding: 6px 6px 6px 16px;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    display: flex; align-items: flex-end; gap: 10px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 18px; padding: 6px 6px 6px 16px;
   }
   .input-wrap:focus-within {
     border-color: rgba(108,92,231,0.5);
     box-shadow: 0 0 0 3px rgba(108,92,231,0.12);
   }
-
   #inp {
-    flex: 1;
-    background: transparent;
-    border: none;
-    outline: none;
-    color: var(--text);
-    font-family: inherit;
-    font-size: 14px;
-    line-height: 1.5;
-    resize: none;
-    max-height: 120px;
-    padding: 8px 0;
+    flex: 1; background: transparent; border: none; outline: none;
+    color: var(--text); font-family: inherit; font-size: 14px;
+    line-height: 1.5; resize: none; max-height: 120px; padding: 8px 0;
   }
   #inp::placeholder { color: var(--muted); }
-
   #btn {
-    width: 42px;
-    height: 42px;
-    border: none;
-    border-radius: 14px;
-    background: var(--user);
-    color: #fff;
-    cursor: pointer;
-    display: grid;
-    place-items: center;
-    flex-shrink: 0;
-    transition: transform 0.15s, box-shadow 0.2s, opacity 0.2s;
+    width: 42px; height: 42px; border: none; border-radius: 14px;
+    background: var(--user); color: #fff; cursor: pointer;
+    display: grid; place-items: center; flex-shrink: 0;
     box-shadow: 0 4px 16px rgba(108,92,231,0.35);
   }
-  #btn:hover:not(:disabled) {
-    transform: scale(1.05);
-    box-shadow: 0 6px 22px rgba(108,92,231,0.45);
-  }
-  #btn:active:not(:disabled) { transform: scale(0.95); }
-  #btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-    box-shadow: none;
-  }
-  #btn svg {
-    width: 18px;
-    height: 18px;
-    fill: currentColor;
-  }
-
-  /* Suggestions */
-  .suggestions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 12px;
-  }
-  .chip {
-    font-size: 12px;
-    padding: 6px 14px;
-    border-radius: 20px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    cursor: pointer;
-    transition: all 0.2s;
-    font-family: inherit;
-  }
-  .chip:hover {
-    border-color: rgba(108,92,231,0.4);
-    color: var(--accent2);
-    background: rgba(108,92,231,0.08);
-  }
+  #btn:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
+  #btn svg { width: 18px; height: 18px; fill: currentColor; }
 </style>
 </head>
 <body>
 <div id="app">
-
   <header>
     <div class="brand">
       <div class="logo">G</div>
       <div class="brand-text">
         <h1>GitHub Omni Agent</h1>
-        <p>gemini-3.5-flash-lite · رایگان</p>
+        <p id="model-label">gemini · رایگان</p>
       </div>
     </div>
     <div id="badge"><span class="dot"></span> آماده</div>
@@ -531,9 +361,9 @@ PAGE = r'''<!DOCTYPE html>
   <div id="messages">
     <div class="row bot">
       <div class="avatar">AI</div>
-      <div class="bubble">سلام 👋 من <b>GitHub Omni Agent</b> هستم.
+      <div class="bubble">سلام 👋 من GitHub Omni Agent هستم.
 
-دستورات را فارسی یا انگلیسی بنویس تا کارهای گیت‌هاب را برایت انجام دهم.</div>
+دستورات را فارسی یا انگلیسی بنویس.</div>
     </div>
   </div>
 
@@ -553,12 +383,11 @@ PAGE = r'''<!DOCTYPE html>
     </div>
     <div class="input-wrap">
       <textarea id="inp" rows="1" placeholder="پیام خود را بنویس..."></textarea>
-      <button id="btn" type="button" title="ارسال">
+      <button id="btn" type="button">
         <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
       </button>
     </div>
   </div>
-
 </div>
 
 <script>
@@ -574,20 +403,16 @@ PAGE = r'''<!DOCTYPE html>
   function addMsg(text, kind) {
     var row = document.createElement("div");
     row.className = "row " + kind;
-
     var av = document.createElement("div");
     av.className = "avatar";
     av.textContent = kind === "me" ? "تو" : "AI";
-
     var bub = document.createElement("div");
     bub.className = "bubble";
     bub.textContent = text;
-
     row.appendChild(av);
     row.appendChild(bub);
     messages.appendChild(row);
     messages.scrollTop = messages.scrollHeight;
-    return row;
   }
 
   function showTyping() {
@@ -598,7 +423,6 @@ PAGE = r'''<!DOCTYPE html>
     messages.appendChild(row);
     messages.scrollTop = messages.scrollHeight;
   }
-
   function hideTyping() {
     var t = document.getElementById("typing");
     if (t) t.remove();
@@ -614,7 +438,6 @@ PAGE = r'''<!DOCTYPE html>
       badge.innerHTML = '<span class="dot"></span> آماده';
     }
   }
-
   function setErr() {
     badge.className = "err";
     badge.innerHTML = '<span class="dot"></span> خطا';
@@ -623,52 +446,36 @@ PAGE = r'''<!DOCTYPE html>
   async function send(text) {
     text = (text || inp.value).trim();
     if (!text) return;
-
     inp.value = "";
     inp.style.height = "auto";
     if (suggestions) suggestions.style.display = "none";
-
     addMsg(text, "me");
     setBusy(true);
     showTyping();
-
     try {
       var res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text })
       });
-
-      var data;
-      try {
-        data = await res.json();
-      } catch (_) {
-        hideTyping();
-        addMsg("پاسخ سرور خوانده نشد (" + res.status + ")", "err");
-        setErr();
-        btn.disabled = false;
-        return;
-      }
-
+      var data = await res.json();
       hideTyping();
       var reply = (data && data.reply != null) ? String(data.reply) : "(پاسخ خالی)";
       addMsg(reply, data && data.ok === false ? "err" : "bot");
-
       if (data && data.needs_confirm) {
         confirmMsg.textContent = "⚠ " + (data.confirm_description || "عملیات خطرناک");
         confirmBox.classList.add("show");
       } else {
         confirmBox.classList.remove("show");
       }
-
-      setBusy(false);
+      if (data && data.ok === false) setErr();
+      else setBusy(false);
     } catch (e) {
       hideTyping();
       addMsg("خطای شبکه: " + e.message, "err");
       setErr();
       btn.disabled = false;
     }
-
     inp.focus();
   }
 
@@ -684,7 +491,7 @@ PAGE = r'''<!DOCTYPE html>
       });
       var data = await res.json();
       hideTyping();
-      addMsg(String(data.reply || ""), "bot");
+      addMsg(String(data.reply || ""), data.ok === false ? "err" : "bot");
       setBusy(false);
     } catch (e) {
       hideTyping();
@@ -697,20 +504,13 @@ PAGE = r'''<!DOCTYPE html>
   btn.addEventListener("click", function () { send(); });
   document.getElementById("btn-yes").addEventListener("click", function () { doConfirm(true); });
   document.getElementById("btn-no").addEventListener("click", function () { doConfirm(false); });
-
   inp.addEventListener("keydown", function (e) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   });
-
   inp.addEventListener("input", function () {
     this.style.height = "auto";
     this.style.height = Math.min(this.scrollHeight, 120) + "px";
   });
-
-  // suggestion chips
   var chips = document.querySelectorAll(".chip");
   for (var i = 0; i < chips.length; i++) {
     chips[i].addEventListener("click", function () {
@@ -719,9 +519,13 @@ PAGE = r'''<!DOCTYPE html>
   }
 
   fetch("/api/health").then(function (r) { return r.json(); }).then(function (d) {
+    if (d.model) {
+      document.getElementById("model-label").textContent = d.model + " · رایگان";
+    }
     if (!d.ok) {
       badge.className = "err";
-      badge.innerHTML = '<span class="dot"></span> کلیدها ناقص';
+      badge.innerHTML = '<span class="dot"></span> مشکل تنظیمات';
+      if (d.error) addMsg("مشکل راه‌اندازی: " + d.error, "err");
     }
   }).catch(function () {});
 
