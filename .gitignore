@@ -33,3 +33,6 @@ ENV/
 logs/
 tmp/
 .cache/
+
+# agent memory (local)
+data/
