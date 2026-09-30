@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""GitHub Omni Agent - Web UI (simple & reliable)"""
+"""GitHub Omni Agent - Web UI (premium design)"""
 
 import os
 from typing import Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -112,267 +112,621 @@ PAGE = r'''<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GitHub Omni Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  html, body { height: 100%; margin: 0; }
-  body {
-    font-family: Tahoma, "Segoe UI", Arial, sans-serif;
-    background: #0f1117;
-    color: #e8eaed;
-    display: flex;
-    flex-direction: column;
+  :root {
+    --bg: #07070c;
+    --surface: #12121a;
+    --surface2: #1a1a24;
+    --border: rgba(255,255,255,0.07);
+    --text: #ececf1;
+    --muted: #8b8b9e;
+    --accent: #6c5ce7;
+    --accent2: #a29bfe;
+    --user: linear-gradient(135deg, #6c5ce7 0%, #4834d4 100%);
+    --success: #00d2a0;
+    --warning: #f0b429;
+    --danger: #ff6b6b;
+    --radius: 16px;
+    --shadow: 0 8px 32px rgba(0,0,0,0.4);
   }
 
-  #top {
-    background: #161b22;
-    border-bottom: 1px solid #30363d;
-    padding: 12px 16px;
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    font-family: 'Vazirmatn', Tahoma, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+  }
+
+  /* Ambient glow */
+  body::before {
+    content: '';
+    position: fixed;
+    top: -40%;
+    left: -20%;
+    width: 70%;
+    height: 70%;
+    background: radial-gradient(circle, rgba(108,92,231,0.12) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  body::after {
+    content: '';
+    position: fixed;
+    bottom: -30%;
+    right: -15%;
+    width: 55%;
+    height: 55%;
+    background: radial-gradient(circle, rgba(0,210,160,0.06) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  #app {
+    position: relative;
+    z-index: 1;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    max-width: 820px;
+    margin: 0 auto;
+  }
+
+  /* ── Header ── */
+  header {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
-  }
-  #top h1 { margin: 0; font-size: 16px; font-weight: 600; }
-  #top small { color: #8b949e; font-size: 12px; }
-  #badge {
-    font-size: 11px;
-    padding: 3px 10px;
-    border-radius: 20px;
-    background: #23863633;
-    color: #3fb950;
-    border: 1px solid #23863666;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(18,18,26,0.75);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
   }
 
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: var(--user);
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    font-size: 18px;
+    color: #fff;
+    box-shadow: 0 4px 20px rgba(108,92,231,0.4);
+    position: relative;
+  }
+  .logo::after {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #a29bfe, #6c5ce7, #00d2a0);
+    z-index: -1;
+    opacity: 0.5;
+    filter: blur(6px);
+  }
+
+  .brand-text h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.2px;
+  }
+  .brand-text p {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  #badge {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 5px 12px;
+    border-radius: 20px;
+    background: rgba(0,210,160,0.1);
+    color: var(--success);
+    border: 1px solid rgba(0,210,160,0.25);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.3s;
+  }
+  #badge .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 2s infinite;
+  }
+  #badge.busy {
+    background: rgba(108,92,231,0.12);
+    color: var(--accent2);
+    border-color: rgba(108,92,231,0.3);
+  }
+  #badge.err {
+    background: rgba(255,107,107,0.1);
+    color: var(--danger);
+    border-color: rgba(255,107,107,0.3);
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.85); }
+  }
+
+  /* ── Messages ── */
   #messages {
     flex: 1;
     overflow-y: auto;
-    padding: 16px;
+    padding: 24px 20px;
     display: flex;
     flex-direction: column;
+    gap: 14px;
+    scroll-behavior: smooth;
+  }
+  #messages::-webkit-scrollbar { width: 4px; }
+  #messages::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.1);
+    border-radius: 4px;
+  }
+
+  .row {
+    display: flex;
     gap: 10px;
+    animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .row.me { flex-direction: row; }
+  .row.bot { flex-direction: row-reverse; }
+
+  .avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    font-size: 13px;
+    font-weight: 700;
+    margin-top: 2px;
+  }
+  .row.me .avatar {
+    background: var(--user);
+    color: #fff;
+    box-shadow: 0 2px 10px rgba(108,92,231,0.35);
+  }
+  .row.bot .avatar {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--accent2);
   }
 
   .bubble {
-    max-width: 80%;
-    padding: 10px 14px;
-    border-radius: 12px;
+    max-width: 75%;
+    padding: 12px 16px;
+    border-radius: var(--radius);
     font-size: 14px;
-    line-height: 1.6;
+    line-height: 1.7;
     white-space: pre-wrap;
     word-break: break-word;
+    position: relative;
   }
-  .me {
-    align-self: flex-start;
-    background: #1f6feb;
+  .row.me .bubble {
+    background: var(--user);
     color: #fff;
+    border-bottom-right-radius: 4px;
+    box-shadow: 0 4px 18px rgba(108,92,231,0.25);
   }
-  .bot {
-    align-self: flex-end;
-    background: #21262d;
-    border: 1px solid #30363d;
-    color: #e8eaed;
+  .row.bot .bubble {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-bottom-left-radius: 4px;
   }
-  .err {
-    align-self: flex-end;
-    background: #3d1214;
-    border: 1px solid #f8514966;
-    color: #ffa198;
+  .row.err .bubble {
+    background: rgba(255,107,107,0.08);
+    border: 1px solid rgba(255,107,107,0.25);
+    color: #ffa8a8;
+    border-bottom-left-radius: 4px;
   }
 
+  /* Typing indicator */
+  .typing-row {
+    display: flex;
+    flex-direction: row-reverse;
+    gap: 10px;
+    animation: slideUp 0.3s ease;
+  }
+  .typing-bubble {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    border-bottom-left-radius: 4px;
+    padding: 14px 18px;
+    display: flex;
+    gap: 5px;
+    align-items: center;
+  }
+  .typing-bubble span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent2);
+    animation: bounce 1.4s infinite ease-in-out both;
+  }
+  .typing-bubble span:nth-child(1) { animation-delay: 0s; }
+  .typing-bubble span:nth-child(2) { animation-delay: 0.16s; }
+  .typing-bubble span:nth-child(3) { animation-delay: 0.32s; }
+
+  @keyframes bounce {
+    0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+    40% { transform: scale(1); opacity: 1; }
+  }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── Confirm ── */
   #confirm {
     display: none;
-    margin: 0 16px 8px;
-    padding: 10px 14px;
-    background: #3d2e00;
-    border: 1px solid #d2992266;
-    border-radius: 10px;
-    font-size: 13px;
-    color: #e3b341;
+    margin: 0 20px 10px;
+    padding: 14px 16px;
+    background: rgba(240,180,41,0.08);
+    border: 1px solid rgba(240,180,41,0.3);
+    border-radius: 14px;
+    animation: slideUp 0.3s ease;
   }
   #confirm.show { display: block; }
-  #confirm button {
-    margin-top: 8px;
-    margin-left: 6px;
-    padding: 5px 14px;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
+  #confirm-msg {
     font-size: 13px;
+    color: var(--warning);
+    margin-bottom: 10px;
+    line-height: 1.5;
   }
-  #btn-yes { background: #d29922; color: #000; }
-  #btn-no  { background: #30363d; color: #e8eaed; }
+  .confirm-btns { display: flex; gap: 8px; }
+  .confirm-btns button {
+    padding: 7px 18px;
+    border: none;
+    border-radius: 10px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: transform 0.15s, opacity 0.15s;
+  }
+  .confirm-btns button:active { transform: scale(0.96); }
+  #btn-yes {
+    background: var(--warning);
+    color: #1a1200;
+  }
+  #btn-yes:hover { opacity: 0.9; }
+  #btn-no {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  #btn-no:hover { background: #22222e; }
 
+  /* ── Input area ── */
   #bottom {
-    border-top: 1px solid #30363d;
-    background: #161b22;
-    padding: 12px 16px;
-    display: flex;
-    gap: 8px;
+    flex-shrink: 0;
+    padding: 12px 20px 18px;
+    border-top: 1px solid var(--border);
+    background: rgba(18,18,26,0.75);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
   }
+
+  .input-wrap {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 6px 6px 6px 16px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .input-wrap:focus-within {
+    border-color: rgba(108,92,231,0.5);
+    box-shadow: 0 0 0 3px rgba(108,92,231,0.12);
+  }
+
   #inp {
     flex: 1;
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 10px;
-    padding: 10px 12px;
-    color: #e8eaed;
-    font-size: 14px;
-    font-family: inherit;
+    background: transparent;
+    border: none;
     outline: none;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
     resize: none;
-    min-height: 42px;
     max-height: 120px;
+    padding: 8px 0;
   }
-  #inp:focus { border-color: #1f6feb; }
+  #inp::placeholder { color: var(--muted); }
+
   #btn {
     width: 42px;
     height: 42px;
     border: none;
-    border-radius: 10px;
-    background: #1f6feb;
+    border-radius: 14px;
+    background: var(--user);
     color: #fff;
-    font-size: 18px;
     cursor: pointer;
+    display: grid;
+    place-items: center;
     flex-shrink: 0;
+    transition: transform 0.15s, box-shadow 0.2s, opacity 0.2s;
+    box-shadow: 0 4px 16px rgba(108,92,231,0.35);
   }
-  #btn:disabled { opacity: 0.4; cursor: wait; }
-  #btn:hover:not(:disabled) { background: #388bfd; }
+  #btn:hover:not(:disabled) {
+    transform: scale(1.05);
+    box-shadow: 0 6px 22px rgba(108,92,231,0.45);
+  }
+  #btn:active:not(:disabled) { transform: scale(0.95); }
+  #btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  #btn svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+  }
+
+  /* Suggestions */
+  .suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .chip {
+    font-size: 12px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+  .chip:hover {
+    border-color: rgba(108,92,231,0.4);
+    color: var(--accent2);
+    background: rgba(108,92,231,0.08);
+  }
 </style>
 </head>
 <body>
+<div id="app">
 
-<div id="top">
-  <div>
-    <h1>GitHub Omni Agent</h1>
-    <small>gemini-3.5-flash-lite</small>
+  <header>
+    <div class="brand">
+      <div class="logo">G</div>
+      <div class="brand-text">
+        <h1>GitHub Omni Agent</h1>
+        <p>gemini-3.5-flash-lite · رایگان</p>
+      </div>
+    </div>
+    <div id="badge"><span class="dot"></span> آماده</div>
+  </header>
+
+  <div id="messages">
+    <div class="row bot">
+      <div class="avatar">AI</div>
+      <div class="bubble">سلام 👋 من <b>GitHub Omni Agent</b> هستم.
+
+دستورات را فارسی یا انگلیسی بنویس تا کارهای گیت‌هاب را برایت انجام دهم.</div>
+    </div>
   </div>
-  <span id="badge">آماده</span>
-</div>
 
-<div id="messages">
-  <div class="bubble bot">سلام! من ایجنت گیت‌هاب هستم.
-دستورات را فارسی یا انگلیسی بنویس.
+  <div id="confirm">
+    <div id="confirm-msg"></div>
+    <div class="confirm-btns">
+      <button id="btn-yes" type="button">تأیید و اجرا</button>
+      <button id="btn-no" type="button">لغو</button>
+    </div>
+  </div>
 
-مثال:
-• لیست ریپوهای من رو نشون بده
-• اطلاعات حساب من رو بگو</div>
-</div>
+  <div id="bottom">
+    <div class="suggestions" id="suggestions">
+      <button class="chip" type="button" data-q="لیست ریپوهای من رو نشون بده">📦 ریپوهای من</button>
+      <button class="chip" type="button" data-q="اطلاعات حساب من رو بگو">👤 حساب من</button>
+      <button class="chip" type="button" data-q="ساختار ریپوی github-omni-agent رو ببین">📁 ساختار پروژه</button>
+    </div>
+    <div class="input-wrap">
+      <textarea id="inp" rows="1" placeholder="پیام خود را بنویس..."></textarea>
+      <button id="btn" type="button" title="ارسال">
+        <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+      </button>
+    </div>
+  </div>
 
-<div id="confirm">
-  <div id="confirm-msg"></div>
-  <button id="btn-yes" type="button">تأیید</button>
-  <button id="btn-no" type="button">لغو</button>
-</div>
-
-<div id="bottom">
-  <textarea id="inp" rows="1" placeholder="پیام خود را بنویس..."></textarea>
-  <button id="btn" type="button">➤</button>
 </div>
 
 <script>
-const messages = document.getElementById("messages");
-const inp = document.getElementById("inp");
-const btn = document.getElementById("btn");
-const badge = document.getElementById("badge");
-const confirmBox = document.getElementById("confirm");
-const confirmMsg = document.getElementById("confirm-msg");
-const btnYes = document.getElementById("btn-yes");
-const btnNo = document.getElementById("btn-no");
+(function () {
+  var messages = document.getElementById("messages");
+  var inp = document.getElementById("inp");
+  var btn = document.getElementById("btn");
+  var badge = document.getElementById("badge");
+  var confirmBox = document.getElementById("confirm");
+  var confirmMsg = document.getElementById("confirm-msg");
+  var suggestions = document.getElementById("suggestions");
 
-function addBubble(text, cls) {
-  const el = document.createElement("div");
-  el.className = "bubble " + cls;
-  el.textContent = text;   // امن و بدون HTML injection
-  messages.appendChild(el);
-  messages.scrollTop = messages.scrollHeight;
-  return el;
-}
+  function addMsg(text, kind) {
+    var row = document.createElement("div");
+    row.className = "row " + kind;
 
-function setBusy(on) {
-  btn.disabled = on;
-  badge.textContent = on ? "در حال کار..." : "آماده";
-  badge.style.color = on ? "#58a6ff" : "#3fb950";
-  badge.style.background = on ? "#1f6feb33" : "#23863633";
-  badge.style.borderColor = on ? "#1f6feb66" : "#23863666";
-}
+    var av = document.createElement("div");
+    av.className = "avatar";
+    av.textContent = kind === "me" ? "تو" : "AI";
 
-async function send() {
-  const text = inp.value.trim();
-  if (!text) return;
+    var bub = document.createElement("div");
+    bub.className = "bubble";
+    bub.textContent = text;
 
-  inp.value = "";
-  addBubble(text, "me");
-  setBusy(true);
+    row.appendChild(av);
+    row.appendChild(bub);
+    messages.appendChild(row);
+    messages.scrollTop = messages.scrollHeight;
+    return row;
+  }
 
-  try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text })
-    });
+  function showTyping() {
+    var row = document.createElement("div");
+    row.className = "typing-row";
+    row.id = "typing";
+    row.innerHTML = '<div class="avatar" style="background:#1a1a24;border:1px solid rgba(255,255,255,0.07);color:#a29bfe;width:32px;height:32px;border-radius:10px;display:grid;place-items:center;font-size:13px;font-weight:700">AI</div><div class="typing-bubble"><span></span><span></span><span></span></div>';
+    messages.appendChild(row);
+    messages.scrollTop = messages.scrollHeight;
+  }
 
-    let data;
-    try {
-      data = await res.json();
-    } catch (_) {
-      addBubble("پاسخ سرور قابل خواندن نبود (status " + res.status + ")", "err");
-      setBusy(false);
-      return;
-    }
+  function hideTyping() {
+    var t = document.getElementById("typing");
+    if (t) t.remove();
+  }
 
-    const reply = (data && data.reply != null) ? String(data.reply) : "(پاسخ خالی)";
-    addBubble(reply, data && data.ok === false ? "err" : "bot");
-
-    if (data && data.needs_confirm) {
-      confirmMsg.textContent = "⚠ " + (data.confirm_description || "عملیات خطرناک");
-      confirmBox.classList.add("show");
+  function setBusy(on) {
+    btn.disabled = on;
+    if (on) {
+      badge.className = "busy";
+      badge.innerHTML = '<span class="dot"></span> در حال کار...';
     } else {
-      confirmBox.classList.remove("show");
+      badge.className = "";
+      badge.innerHTML = '<span class="dot"></span> آماده';
     }
-  } catch (e) {
-    addBubble("خطای شبکه: " + e.message, "err");
   }
 
-  setBusy(false);
-  inp.focus();
-}
+  function setErr() {
+    badge.className = "err";
+    badge.innerHTML = '<span class="dot"></span> خطا';
+  }
 
-async function doConfirm(approved) {
-  confirmBox.classList.remove("show");
-  setBusy(true);
-  try {
-    const res = await fetch("/api/confirm", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ approved: approved })
+  async function send(text) {
+    text = (text || inp.value).trim();
+    if (!text) return;
+
+    inp.value = "";
+    inp.style.height = "auto";
+    if (suggestions) suggestions.style.display = "none";
+
+    addMsg(text, "me");
+    setBusy(true);
+    showTyping();
+
+    try {
+      var res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text })
+      });
+
+      var data;
+      try {
+        data = await res.json();
+      } catch (_) {
+        hideTyping();
+        addMsg("پاسخ سرور خوانده نشد (" + res.status + ")", "err");
+        setErr();
+        btn.disabled = false;
+        return;
+      }
+
+      hideTyping();
+      var reply = (data && data.reply != null) ? String(data.reply) : "(پاسخ خالی)";
+      addMsg(reply, data && data.ok === false ? "err" : "bot");
+
+      if (data && data.needs_confirm) {
+        confirmMsg.textContent = "⚠ " + (data.confirm_description || "عملیات خطرناک");
+        confirmBox.classList.add("show");
+      } else {
+        confirmBox.classList.remove("show");
+      }
+
+      setBusy(false);
+    } catch (e) {
+      hideTyping();
+      addMsg("خطای شبکه: " + e.message, "err");
+      setErr();
+      btn.disabled = false;
+    }
+
+    inp.focus();
+  }
+
+  async function doConfirm(approved) {
+    confirmBox.classList.remove("show");
+    setBusy(true);
+    showTyping();
+    try {
+      var res = await fetch("/api/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved: approved })
+      });
+      var data = await res.json();
+      hideTyping();
+      addMsg(String(data.reply || ""), "bot");
+      setBusy(false);
+    } catch (e) {
+      hideTyping();
+      addMsg("خطا: " + e.message, "err");
+      setErr();
+      btn.disabled = false;
+    }
+  }
+
+  btn.addEventListener("click", function () { send(); });
+  document.getElementById("btn-yes").addEventListener("click", function () { doConfirm(true); });
+  document.getElementById("btn-no").addEventListener("click", function () { doConfirm(false); });
+
+  inp.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  });
+
+  inp.addEventListener("input", function () {
+    this.style.height = "auto";
+    this.style.height = Math.min(this.scrollHeight, 120) + "px";
+  });
+
+  // suggestion chips
+  var chips = document.querySelectorAll(".chip");
+  for (var i = 0; i < chips.length; i++) {
+    chips[i].addEventListener("click", function () {
+      send(this.getAttribute("data-q"));
     });
-    const data = await res.json();
-    addBubble(String(data.reply || ""), "bot");
-  } catch (e) {
-    addBubble("خطا: " + e.message, "err");
   }
-  setBusy(false);
-}
 
-btn.addEventListener("click", send);
-btnYes.addEventListener("click", function () { doConfirm(true); });
-btnNo.addEventListener("click", function () { doConfirm(false); });
+  fetch("/api/health").then(function (r) { return r.json(); }).then(function (d) {
+    if (!d.ok) {
+      badge.className = "err";
+      badge.innerHTML = '<span class="dot"></span> کلیدها ناقص';
+    }
+  }).catch(function () {});
 
-inp.addEventListener("keydown", function (e) {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    send();
-  }
-});
-
-// health
-fetch("/api/health").then(function (r) { return r.json(); }).then(function (d) {
-  if (!d.ok) {
-    badge.textContent = "کلیدها ناقص";
-    badge.style.color = "#f85149";
-    badge.style.background = "#f8514933";
-  }
-}).catch(function () {});
-
-inp.focus();
+  inp.focus();
+})();
 </script>
 </body>
 </html>
